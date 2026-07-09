@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { useGLTF, Instances, Instance } from '@react-three/drei'
 import {
   useJSON,
@@ -19,6 +19,8 @@ import { useGameStore } from '../game/store'
 import { swayUniforms } from './sway'
 import { Beds } from './Beds'
 import { Slot } from './Slot'
+import { Hero } from './Hero'
+import { heroTarget } from './heroTarget'
 
 export interface CamView {
   pos: Vec3
@@ -46,6 +48,9 @@ const INSTANCED_ASSETS = ['tree', 'bush'] as const
 const CASTERS = new Set(['house', 'greenhouse', 'food_truck', 'tree', 'raised_bed'])
 
 const PLANT_ASSETS = ['raised_bed', 'carrot', 'greens', 'tomato_bush'] as const
+
+// Стартовая точка героя: на дорожке перед домом, вне его 3×3 основания.
+const HERO_START: Vec3 = [1.0, 0, 2.2]
 
 for (const a of [...SINGLETON_ASSETS, ...INSTANCED_ASSETS, ...PLANT_ASSETS])
   useGLTF.preload(propUrl(a))
@@ -187,7 +192,14 @@ function InstancedProp({
 
 function Ground({ size, color }: { size: number; color: string }) {
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      receiveShadow
+      onClick={(e: ThreeEvent<MouseEvent>) => {
+        e.stopPropagation()
+        heroTarget.set(e.point.x, 0, e.point.z)
+      }}
+    >
       <planeGeometry args={[size, size]} />
       <meshLambertMaterial color={color} />
     </mesh>
@@ -274,6 +286,7 @@ export function Farm({
       })}
 
       <Beds plots={layout.plots} palette={palette} />
+      <Hero palette={palette} start={HERO_START} />
       {slotPositions.map((s) => (
         <Slot key={s.id} slotId={s.id} position={s.position} palette={palette} />
       ))}
