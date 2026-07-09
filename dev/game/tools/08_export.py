@@ -149,15 +149,17 @@ def tri_count(obj):
 # Экспорт одного пропса
 # --------------------------------------------------------------------------
 
-def export_prop(src_obj, name, base_center=True):
+def export_prop(src_obj, name, bake_rotation):
     """
-    Экспортирует копию src_obj в props/<name>.glb.
+    Экспортирует копию src_obj в props/<name>.glb с origin в основании bbox
+    (центр XY, min Z, в мировом нуле) — растения/пропсы «стоят от земли».
 
-    Копия центрируется так, чтобы origin оказался в основании bbox
-    (центр XY, min Z) и в мировом (0,0,0) — тогда в игре пропс ставится
-    позицией из scene-layout и растёт/стоит от земли. Для carrot/greens/
-    tomato_bush это то самое принудительное «origin в основание» из ТЗ
-    (для tomato_bush — фикс бага, для остальных — no-op).
+    bake_rotation=True  — поворот объекта запекается в геометрию (одиночные
+                          пропсы: дом, теплица, фудтрак…). В scene-layout у них
+                          rotationY = 0, потому что поворот уже в меше.
+    bake_rotation=False — поворот снимается, геометрия каноническая, не повёрнута
+                          (деревья/кусты для инстансинга; грядки и растения,
+                          которые игра сама поворачивает/ставит по слотам).
 
     Возвращает число треугольников.
     """
@@ -168,15 +170,21 @@ def export_prop(src_obj, name, base_center=True):
     dup.data = src_obj.data.copy()
     bpy.context.collection.objects.link(dup)
 
-    # Сдвигаем так, чтобы нужный origin попал в мировой ноль.
-    origin = bbox_base_center(dup) if base_center else (dup.matrix_world @ Vector((0, 0, 0)))
-    dup.matrix_world.translation -= origin
+    if not bake_rotation:
+        dup.rotation_euler = (0.0, 0.0, 0.0)
+    bpy.context.view_layer.update()
 
-    # Применяем трансформации, чтобы меш «сел» на новый origin.
+    # Сдвигаем так, чтобы основание bbox попало в мировой ноль.
+    origin = bbox_base_center(dup)
+    dup.location = dup.location - origin
+    bpy.context.view_layer.update()
+
+    # Применяем всё: меш «садится» на новый origin, поворот запекается
+    # (или уже обнулён выше для канонических пропсов).
     bpy.ops.object.select_all(action="DESELECT")
     dup.select_set(True)
     bpy.context.view_layer.objects.active = dup
-    bpy.ops.object.transform_apply(location=True, rotation=False, scale=True)
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
     tris = tri_count(dup)
 
@@ -294,31 +302,39 @@ def instance_entry(obj, asset, ref_height):
         s = bbox_size(obj).z / ref_height
     else:
         s = 1.0
-    # object.rotation_euler.z (Blender Z) = поворот вокруг Y в glTF.
-    rot_y = obj.rotation_euler.z
+    # Поворот одиночных пропсов запечён в GLB (см. export_prop), а деревья/кусты
+    # в сцене не повёрнуты — поэтому rotationY здесь всегда 0.
     return {
         "asset": asset,
         "position": [round(c, 4) for c in to_yup(base)],
-        "rotationY": round(rot_y, 5),
+        "rotationY": 0.0,
         "scale": [round(s, 4), round(s, 4), round(s, 4)],
     }
 
 
 def build_plots(beds):
-    """plots[]: по грядке — позиция bed и 4 слота. Сортируем по (x, y)
-    для стабильных id между запусками."""
+    """plots[]: по грядке — позиция bed, её поворот и 4 слота посадки.
+    Слоты идут вдоль локальной оси грядки (ширина), поэтому офсеты
+    поворачиваем на угол грядки — иначе на повёрнутой грядке растения
+    сядут криво. Сортируем по (x, y) для стабильных id между запусками."""
     beds_sorted = sorted(beds, key=lambda o: (round(o.location.x, 2),
                                                round(o.location.y, 2)))
     plots = []
     for i, bed in enumerate(beds_sorted):
         base = bbox_base_center(bed)
         cx, cy = base.x, base.y
+        theta = bed.rotation_euler.z
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
         slots = []
         for ox in SLOT_OFFSETS_X:
-            slots.append([round(c, 4) for c in to_yup(Vector((cx + ox, cy, BED_TOP_Z)))])
+            # локальный офсет (ox, 0) поворачиваем на угол грядки
+            wx = cx + ox * cos_t
+            wy = cy + ox * sin_t
+            slots.append([round(c, 4) for c in to_yup(Vector((wx, wy, BED_TOP_Z)))])
         plots.append({
             "id": i,
             "bed": [round(c, 4) for c in to_yup(Vector((cx, cy, 0.0)))],
+            "bedRotationY": round(theta, 5),
             "slots": slots,
         })
     return plots
@@ -378,12 +394,15 @@ def main():
     exported = {}   # asset -> tris (эталонный меш)
     counts = {}     # asset -> число инстансов в сцене
 
-    # Порядок экспорта: сначала растения/грядки (с принудительным основанием),
-    # потом остальное. base_center=True для всех — origin в основание bbox.
-    plant_assets = ("carrot", "greens", "tomato_bush")
     all_assets = ["house", "greenhouse", "food_truck", "brick_path",
                   "raised_bed", "log_table", "sit_log", "ladybug",
                   "carrot", "greens", "tomato_bush", "tree", "bush"]
+
+    # Одиночные пропсы: поворот запекаем в GLB (rotationY=0 в layout).
+    # Остальные (деревья/кусты для инстансинга, грядки и растения, которые
+    # игра сама ставит/поворачивает) — каноническая, не повёрнутая геометрия.
+    BAKE_ROTATION = {"house", "greenhouse", "food_truck", "brick_path",
+                     "log_table", "sit_log", "ladybug"}
 
     for asset in all_assets:
         objs = cats[asset]
@@ -393,7 +412,7 @@ def main():
             continue
         # Один GLB на пропс — экспортируем эталон (первый объект категории).
         rep = objs[0]
-        exported[asset] = export_prop(rep, asset, base_center=True)
+        exported[asset] = export_prop(rep, asset, bake_rotation=(asset in BAKE_ROTATION))
 
     # --- scene-layout.json ---
     props_list = []
