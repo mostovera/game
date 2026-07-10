@@ -15,6 +15,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { dayProgress, getClock, isNight, subscribeClock } from '../game/dayClock'
 import {
+  cookableRecipes,
   craftableCount,
   RECIPES,
   useGameStore,
@@ -65,6 +66,8 @@ function noticeText(n: Notice): { text: string; tone: Tone } {
       }
     case 'time-up':
       return { text: 'Время вышло — ярмарка закрыта', tone: 'warn' }
+    case 'no-food':
+      return { text: 'Готовить больше не из чего — ярмарка закрыта', tone: 'warn' }
     case 'harvest':
       return n.amount! > 1
         ? { text: `Удачный сбор! ${ITEM_EMOJI[n.crop!]} +${n.amount}`, tone: 'good' }
@@ -500,36 +503,36 @@ function DishCard({ recipe }: { recipe: RecipeId }) {
     <button
       onClick={() => serveCustomer(recipe)}
       {...hoverTip(RECIPE_NAME[recipe], [`Можно собрать порций: ${count}`])}
-      className={`relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-bold text-[#241a20] transition hover:brightness-110 ${
-        count > 0 ? 'bg-[#ff8b5e]/90' : 'bg-[#ff8b5e]/40'
-      }`}
+      className="relative flex items-center gap-2 rounded-md bg-[#ff8b5e]/90 px-3 py-2 text-sm font-bold text-[#241a20] transition hover:brightness-110"
     >
       <span className="text-xl">{RECIPE_EMOJI[recipe]}</span>
       <span>{RECIPE_NAME[recipe]}</span>
-      <span
-        className={`ml-1 min-w-5 rounded px-1.5 py-0.5 text-center text-xs ${
-          count > 0 ? 'bg-[#241a20]/25' : 'bg-[#241a20]/10 opacity-60'
-        }`}
-      >
+      <span className="ml-1 min-w-5 rounded bg-[#241a20]/25 px-1.5 py-0.5 text-center text-xs">
         {count}
       </span>
     </button>
   )
 }
 
-/** Выдавать можно только освоенное: клиенты и заказывают только его. */
+/**
+ * Выдавать можно только то, что герой прямо сейчас соберёт из сумки. Блюдо, на
+ * которое не хватает ингредиентов, из меню исчезает: кнопка, ведущая лишь к
+ * отказу, — приглашение к ошибке. Ингредиенты кончились совсем — ярмарка сама
+ * закрывается (см. tickTruck), и меню исчезает вместе с ней.
+ */
 function TruckAction() {
   const skipCustomer = useGameStore((s) => s.skipCustomer)
   // Пропускать нечего, пока первый в очереди не дошёл до окна и не заказал.
   const hasOrder = useGameStore((s) => !!s.truck?.queue[0]?.want)
   const knownRecipes = useGameStore((s) => s.knownRecipes)
+  const inventory = useGameStore((s) => s.inventory)
 
   return (
     <div className={`${panel} flex flex-col items-start gap-1.5 p-2`}>
       <span className="px-1 text-[9px] uppercase tracking-wide opacity-50">выдать</span>
       {/* Рецептов может стать пять — на узком экране ряд переносится. */}
       <div className="flex flex-wrap items-center gap-2">
-        {knownRecipes.map((r) => (
+        {cookableRecipes(knownRecipes, inventory).map((r) => (
           <DishCard key={r} recipe={r} />
         ))}
 
@@ -644,6 +647,7 @@ export function HUD() {
   const phase = useGameStore((s) => s.phase)
   const toolbar = useGameStore((s) => s.toolbar)
   const knownRecipes = useGameStore((s) => s.knownRecipes)
+  const inventory = useGameStore((s) => s.inventory)
   const selectSeed = useGameStore((s) => s.selectSeed)
   const selectTool = useGameStore((s) => s.selectTool)
   const serveCustomer = useGameStore((s) => s.serveCustomer)
@@ -666,10 +670,11 @@ export function HUD() {
       if (inventoryOpen || bookOpen) return // за модалкой инструменты не переключаем
 
       // В день торговли цифры подают блюда — ровно в том порядке, в каком они
-      // нарисованы на кнопках выдачи, то есть в порядке освоенных рецептов.
+      // нарисованы на кнопках выдачи, то есть в порядке доступных сейчас блюд.
       if (phase === 'truck') {
+        const dishes = cookableRecipes(knownRecipes, inventory)
         const dish = TOOLBAR_KEYS.indexOf(e.key)
-        if (dish >= 0 && dish < knownRecipes.length) serveCustomer(knownRecipes[dish])
+        if (dish >= 0 && dish < dishes.length) serveCustomer(dishes[dish])
         return
       }
 
@@ -692,6 +697,7 @@ export function HUD() {
     phase,
     toolbar,
     knownRecipes,
+    inventory,
     selectSeed,
     selectTool,
     serveCustomer,

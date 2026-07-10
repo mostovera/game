@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BASE_RECIPE_IDS,
   BEDS,
+  cookableRecipes,
   EGG_REGROW,
   MUSHROOM_REGROW,
   regrowChance,
@@ -318,6 +319,8 @@ describe('уведомления', () => {
   it('ушедший клиент и конец времени попадают в тосты', () => {
     useGameStore.setState({
       phase: 'truck',
+      // С пустой сумкой ярмарка закрылась бы первым же тиком — торговать нечем.
+      inventory: bag({ carrot: 2, greens: 2, tomato: 2 }),
       truck: {
         timeLeft: 60,
         queue: [{ id: 1, want: 'taco', patience: 0.5, maxPatience: 16 }],
@@ -484,6 +487,9 @@ describe('день фудтрака (Task 3)', () => {
     ...over,
   })
 
+  // Сумка, из которой хоть что-то готовится: с пустой ярмарка закрывается сама.
+  const stocked = () => bag({ carrot: 2, greens: 2, tomato: 2 })
+
   it('пропуск заказа отпускает первого и двигает очередь', () => {
     useGameStore.setState({
       phase: 'truck',
@@ -526,14 +532,14 @@ describe('день фудтрака (Task 3)', () => {
   })
 
   it('tickTruck спавнит клиента и убавляет время', () => {
-    useGameStore.setState({ phase: 'truck', truck: mkTruck() })
+    useGameStore.setState({ phase: 'truck', truck: mkTruck(), inventory: stocked() })
     S().tickTruck(3)
     expect(S().truck!.queue.length).toBe(1)
     expect(S().truck!.timeLeft).toBeLessThan(60)
   })
 
   it('каждый клиент получает свой id, и он не переиспользуется', () => {
-    useGameStore.setState({ phase: 'truck', truck: mkTruck() })
+    useGameStore.setState({ phase: 'truck', truck: mkTruck(), inventory: stocked() })
     S().tickTruck(3) // спавн первого
     const first = S().truck!.queue[0].id
     S().tickTruck(7) // спавн второго
@@ -551,8 +557,39 @@ describe('день фудтрака (Task 3)', () => {
     expect(S().truck!.queue.map((c) => c.id)).not.toContain(first)
   })
 
+  it('cookableRecipes отбирает только то, что герой соберёт сейчас', () => {
+    const known = BASE_RECIPE_IDS
+    expect(cookableRecipes(known, bag({ carrot: 2 }))).toEqual(['soup'])
+    expect(cookableRecipes(known, bag({ carrot: 2, greens: 1, tomato: 1 }))).toEqual([
+      'salad',
+      'soup',
+      'taco',
+    ])
+    expect(cookableRecipes(known, bag({ greens: 9 }))).toEqual([])
+  })
+
+  it('готовить не из чего → ярмарка закрывается сама', () => {
+    useGameStore.setState({ phase: 'truck', inventory: bag({}), truck: mkTruck() })
+    S().tickTruck(0.1)
+    expect(S().truck!.ended).toBe(true)
+    expect(S().notices.at(-1)!.kind).toBe('no-food')
+  })
+
+  it('последняя порция ушла клиенту — день кончается на следующем тике', () => {
+    useGameStore.setState({
+      phase: 'truck',
+      inventory: bag({ carrot: 2 }),
+      truck: mkTruck({ queue: [{ id: 1, want: 'soup', patience: 16, maxPatience: 16 }] }),
+    })
+    S().tickTruck(0.1)
+    expect(S().truck!.ended).toBe(false) // на суп ещё хватает
+    expect(S().serveCustomer('soup')).toBe('ok')
+    S().tickTruck(0.1)
+    expect(S().truck!.ended).toBe(true)
+  })
+
   it('время вышло → truck.ended', () => {
-    useGameStore.setState({ phase: 'truck', truck: mkTruck({ timeLeft: 0.5 }) })
+    useGameStore.setState({ phase: 'truck', inventory: stocked(), truck: mkTruck({ timeLeft: 0.5 }) })
     S().tickTruck(1)
     expect(S().truck!.ended).toBe(true)
   })
@@ -583,7 +620,7 @@ describe('день фудтрака (Task 3)', () => {
   })
 
   it('заказ появляется только у окна: спавн даёт клиента без него', () => {
-    useGameStore.setState({ phase: 'truck', truck: mkTruck() })
+    useGameStore.setState({ phase: 'truck', truck: mkTruck(), inventory: stocked() })
     S().tickTruck(3)
     const c = S().truck!.queue[0]
     expect(c.want).toBeNull()
@@ -595,7 +632,7 @@ describe('день фудтрака (Task 3)', () => {
   })
 
   it('терпение не тратится, пока клиент идёт к окну', () => {
-    useGameStore.setState({ phase: 'truck', truck: mkTruck() })
+    useGameStore.setState({ phase: 'truck', truck: mkTruck(), inventory: stocked() })
     S().tickTruck(3)
     const before = S().truck!.queue[0].patience
     S().tickTruck(5)
@@ -765,6 +802,7 @@ describe('лесные находки и рецепты', () => {
     useGameStore.setState({
       phase: 'truck',
       knownRecipes: ['soup'],
+      inventory: bag({ carrot: 2 }),
       truck: {
         timeLeft: 60,
         queue: [],
