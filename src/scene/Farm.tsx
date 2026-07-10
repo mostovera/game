@@ -30,6 +30,7 @@ import { halfExtentsXZ, type Collider } from './collision'
 import { say } from './heroSpeech'
 import { PHRASES } from './phrases'
 import { HATCH_LAMBDA, HATCH_OPEN } from './truckStage'
+import { Wildlife } from './wildlife/Wildlife'
 
 export interface CamView {
   pos: Vec3
@@ -589,6 +590,7 @@ export function Farm({
       <Beds plots={layout.plots} palette={palette} />
       <Hero palette={palette} start={HERO_START} colliders={colliders} />
       <Customers palette={palette} />
+      <Wildlife layout={layout} palette={palette} />
       {slotPositions.map((s) => (
         <Slot key={s.id} slotId={s.id} position={s.position} palette={palette} />
       ))}
