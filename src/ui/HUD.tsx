@@ -226,11 +226,11 @@ function WeekBar() {
   )
 }
 
-/** Глушит только музыку: шаги, природа и толпа продолжают звучать. */
+/** Глушит весь фон: музыку, птиц, стрекот, толпу. Звуки действий остаются. */
 function MusicToggle() {
   const musicOn = useGameStore((s) => s.musicOn)
   const toggleMusic = useGameStore((s) => s.toggleMusic)
-  const label = musicOn ? 'Выключить музыку' : 'Включить музыку'
+  const label = musicOn ? 'Выключить звук' : 'Включить звук'
   return (
     <button
       onClick={toggleMusic}
@@ -241,17 +241,19 @@ function MusicToggle() {
         musicOn ? 'text-[#f4b942]' : 'text-white/40'
       }`}
     >
-      {musicOn ? '🎵' : '🔇'}
+      {musicOn ? '🔊' : '🔇'}
     </button>
   )
 }
 
 /**
- * Бейджи ячейки в одну колонку у левого края: клавиша вызова сверху, число
- * штук снизу. Правый-верхний угол оставлен точкам перетаскивания (GripDots).
+ * Бейджи ячейки: клавиша вызова — маленькой в левом верхнем углу, число штук —
+ * крупным в правом нижнем, там его и ищут взглядом. Правый-верхний угол оставлен
+ * точкам перетаскивания (GripDots). Тень держит число читаемым поверх иконки.
  */
 const HOTKEY_BADGE = 'pointer-events-none absolute top-0 left-1 text-[9px] opacity-60'
-const COUNT_BADGE = 'pointer-events-none absolute bottom-0 left-1 text-[9px] font-bold opacity-90'
+const COUNT_BADGE =
+  'pointer-events-none absolute bottom-0 right-1 text-sm font-bold [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]'
 
 function ToolButton({
   active,
