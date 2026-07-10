@@ -16,7 +16,9 @@ export default defineConfig({
     // game/, engine/, state/ тестируются без браузера (граница game↔scene, 21-client §3.1).
     environment: 'node',
     globals: true,
-    include: ['src/**/*.{test,spec}.ts'],
+    // .tsx — component-тесты ui/ (@testing-library/react); per-file `@vitest-environment
+    // jsdom` докблок переключает окружение только для них (по умолчанию — 'node' выше).
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
     // Playwright-смоуки живут отдельно (e2e/), их сюда не пускаем.
     exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
     coverage: {

@@ -64,10 +64,44 @@ export interface Ribbon {
   rank: number
 }
 
+/** Анимация неоновой вывески (17-collections §3.7). Постоянное/мигание — база, волна — премиум. */
+export type NeonAnimationKey = 'steady' | 'blink' | 'chase'
+
+/**
+ * Конфиг неоновой вывески (`player_neon_sign`, 17-collections §3.7/§8 таблица
+ * `letters_json`/`pictogram_ids`/`color_ids`/`animation_key`). До 3 строк текста,
+ * до 14 символов в строке (гипотеза спеки, зависит от модели фасада).
+ */
+export interface NeonSignConfig {
+  lines: string[] // ≤3 строки, ≤14 символов каждая
+  pictogramIds: string[]
+  colorIds: string[]
+  animation: NeonAnimationKey
+}
+
+/** Одна сохранённая фотография Kodachrome (`ui_photo_mode`, галерея профиля). */
+export interface CollectionPhoto {
+  id: string
+  url: string
+  takenAt: number
+  filterKey: string
+  frameKey: string
+}
+
 /** Снапшот коллекций (collections-слайс). */
 export interface CollectionsSnapshot {
   toys: Record<string, Toy>
   cosmetics: Partial<Record<CosmeticKey, Cosmetic>>
   postcards: Postcard[]
   ribbons: Ribbon[]
+  /** Ключи разблокированных ачивок (Achievement Wall, 17-collections §3.5) — источник истины сервер. */
+  achievementsUnlocked?: string[]
+  /** Подмножество разблокированных, физически повешенных в интерьере (`Hang`, C6). */
+  achievementsHung?: string[]
+  /** Кэш «готовили N раз» по рецепту (Recipe Box mastery, R18) — инкремент сервера при `craft_collect`. */
+  recipeMastery?: Record<string, number>
+  /** Текущая сохранённая вывеска (Neon Builder, §3.7). `null`/отсутствие — вывеска ещё не собрана. */
+  neonSign?: NeonSignConfig | null
+  /** Галерея Kodachrome (`ui_photo_mode`) — снимки, сохранённые игроком. */
+  photos?: CollectionPhoto[]
 }

@@ -82,6 +82,58 @@ export const assetRegistry: Record<string, AssetEntry> = {
     },
   },
 
+  // ── Town Projects — остальные 4 объекта + стройплощадка (11-town §3.7/§3.8) ──
+  // scene-town: недостающие записи реестра для оставшихся town-project'ов канона —
+  // AGENTS.md §5 «добавляешь сущность канона — заведи её запись в registry.ts».
+  tp_radio_wsun: {
+    placeholder: {
+      shape: 'group',
+      parts: [
+        { shape: 'cylinder', size: [0.15, 0.15, 3], color: 'chrome_dark' },
+        { shape: 'sphere', size: [0.25, 0.25, 0.25], color: 'neon_yellow', offset: [0, 3, 0] },
+      ],
+    },
+  },
+  tp_bandstand: {
+    placeholder: {
+      shape: 'group',
+      parts: [
+        { shape: 'cylinder', size: [1.4, 1.4, 0.3], color: 'diner_cream' },
+        { shape: 'cone', size: [1.6, 1.6, 1.2], color: 'roof_red', offset: [0, 1, 0] },
+      ],
+    },
+  },
+  tp_water_tower: {
+    placeholder: {
+      shape: 'group',
+      parts: [
+        { shape: 'cylinder', size: [1, 1, 1.4], color: 'chrome' },
+        { shape: 'cylinder', size: [0.15, 0.15, 2.5], color: 'chrome_dark', offset: [0, -1.8, 0] },
+      ],
+    },
+  },
+  tp_welcome_arch: {
+    placeholder: {
+      shape: 'group',
+      parts: [
+        { shape: 'box', size: [0.3, 3, 0.3], color: 'chrome', offset: [-2, 1.5, 0] },
+        { shape: 'box', size: [0.3, 3, 0.3], color: 'chrome', offset: [2, 1.5, 0] },
+        { shape: 'box', size: [4.6, 0.3, 0.3], color: 'neon_teal', offset: [0, 3, 0] },
+      ],
+    },
+  },
+  /** Стройплощадка (леса/каркас) — общая заглушка для стадий 1-2 любого tp_* (11-town §3.8.1). */
+  tp_construction_site: {
+    placeholder: {
+      shape: 'group',
+      parts: [
+        { shape: 'box', size: [1.6, 1.6, 1.6], color: 'chrome_dark' },
+        { shape: 'box', size: [0.1, 2, 0.1], color: 'trunk', offset: [0.8, 1, 0.8] },
+        { shape: 'box', size: [0.1, 2, 0.1], color: 'trunk', offset: [-0.8, 1, -0.8] },
+      ],
+    },
+  },
+
   // ── Окружение (инстансится; часть reuse из прототипа) ──
   env_tree: {
     placeholder: {

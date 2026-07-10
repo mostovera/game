@@ -26,6 +26,7 @@ import { createEventSlice } from './event'
 import { createTownSlice } from './town'
 import { createProgressionSlice } from './progression'
 import { createCollectionsSlice } from './collections'
+import { createShopSlice } from './shop'
 import { createUiSlice } from './ui'
 import { createSceneSlice } from './scene'
 
@@ -49,6 +50,7 @@ export const useStore = create<StoreState>()(
       ...createTownSlice(...a),
       ...createProgressionSlice(...a),
       ...createCollectionsSlice(...a),
+      ...createShopSlice(...a),
       ...createUiSlice(...a),
       ...createSceneSlice(...a),
     })),

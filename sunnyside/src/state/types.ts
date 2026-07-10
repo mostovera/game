@@ -20,6 +20,7 @@ import type { EventSlice } from './event'
 import type { TownSlice } from './town'
 import type { ProgressionSlice } from './progression'
 import type { CollectionsSlice } from './collections'
+import type { ShopSlice } from './shop'
 import type { UiSlice } from './ui'
 import type { SceneSlice } from './scene'
 
@@ -37,6 +38,7 @@ export type StoreState = SessionSlice &
   TownSlice &
   ProgressionSlice &
   CollectionsSlice &
+  ShopSlice &
   UiSlice &
   SceneSlice
 
