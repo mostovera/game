@@ -1,0 +1,217 @@
+/**
+ * local.test.ts — интеграционные тесты LocalBackendAdapter.
+ *
+ * Гоняются в environment:'node' (vite.config) — без IndexedDB, persist падает на
+ * in-memory стор (persist.ts). Инъектируем управляемые часы, чтобы «перематывать»
+ * игровое время и наблюдать рост грядок/крафта, пассивную ярмарку, ботов ивента и
+ * недельный rollover без реального ожидания.
+ */
+
+import { describe, it, expect } from 'vitest'
+import { weekStartOfIndex, weekNumberOf, WEEK_MS, HOUR_MS } from '@/engine/clock'
+import type { FarmSnapshot, InventorySnapshot, Plot } from '@/types'
+import { createLocalAdapter } from './local'
+import { createWorldStore } from '../local/persist'
+
+/** Управляемые часы: тест двигает `t`. */
+function makeClock(start: number): { now(): number; advance(ms: number): void } {
+  let t = start
+  return { now: () => t, advance: (ms: number) => { t += ms } }
+}
+
+/** Понедельник 01:00 UTC недели `week` — начало игровой недели + запас до rollover. */
+const WEEK = 3000
+const MONDAY_0100 = weekStartOfIndex(WEEK) + HOUR_MS
+
+function newAdapter(clock: { now(): number }) {
+  return createLocalAdapter({ clock, persist: 'memory', userId: 'test-player', townId: 'test-town' })
+}
+
+async function unwrap<T>(p: Promise<{ ok: true; data: T } | { ok: false; error: { code: string; message: string } }>): Promise<T> {
+  const r = await p
+  if (!r.ok) throw new Error(`RPC failed: ${r.error.code} — ${r.error.message}`)
+  return r.data
+}
+
+describe('LocalBackendAdapter — жизненный цикл и чтения', () => {
+  it('init + ensureSession + getServerTime', async () => {
+    const clock = makeClock(MONDAY_0100)
+    const a = newAdapter(clock)
+    await a.init()
+    const session = await unwrap(a.ensureSession())
+    expect(session.userId).toBe('test-player')
+    const st = await unwrap(a.getServerTime())
+    expect(st.serverNow).toBe(MONDAY_0100)
+  })
+
+  it('стартовая ферма: 6 грядок, стартовые постройки и станки', async () => {
+    const a = newAdapter(makeClock(MONDAY_0100))
+    const farm: FarmSnapshot = await unwrap(a.getFarm())
+    expect(farm.plots).toHaveLength(6)
+    expect(farm.buildings.bld_kitchen?.level).toBe(1)
+    expect(farm.machines.some((m) => m.key === 'mch_oven')).toBe(true)
+  })
+
+  it('календарь: weekIndex = weekNumberOf(now)', async () => {
+    const a = newAdapter(makeClock(MONDAY_0100))
+    const cal = await unwrap(a.getCalendar())
+    expect(cal.weekIndex).toBe(weekNumberOf(MONDAY_0100))
+    expect(cal.phase).toBe('mon_plan')
+  })
+})
+
+describe('LocalBackendAdapter — полный цикл посади→вырасти→скрафть→продай→ивент→rollover', () => {
+  it('прогоняет весь недельный цикл', async () => {
+    const clock = makeClock(MONDAY_0100)
+    const a = newAdapter(clock)
+    await a.init()
+
+    // 1. ПОСАДИ: 5 грядок пшеницы.
+    const farm0 = await unwrap(a.getFarm())
+    const walletStart = await unwrap(a.getWallet())
+    for (let slot = 0; slot < 5; slot++) {
+      const res = await unwrap(a.sow({ slot, seedKey: 'seed_wheat' }))
+      expect(res.plot.state).toBe('growing')
+    }
+    // Списалась стоимость семян (анти-чит: сервер валидирует стоимость).
+    const walletAfterSow = await unwrap(a.getWallet())
+    expect(walletAfterSow.bucks).toBeLessThan(walletStart.bucks)
+
+    // 2. ВЫРАСТИ: пшеница 12 мин; поливаем и перематываем время.
+    const growing = (await unwrap(a.getFarm())).plots.filter((p: Plot) => p.state === 'growing')
+    await unwrap(a.water({ plotIds: growing.map((p) => p.id) }))
+    clock.advance(13 * 60 * 1000)
+
+    const harvest = await unwrap(a.harvest({ plotIds: growing.map((p) => p.id) }))
+    expect(harvest.items.reduce((s, i) => s + i.qty, 0)).toBe(5)
+    const invAfterHarvest: InventorySnapshot = await unwrap(a.getInventory())
+    expect(invAfterHarvest.items.crop_wheat).toBe(5)
+
+    // 3. СКРАФТЬ: муку на печи, партия 2 (входы пшеница×4).
+    const oven = farm0.machines.find((m) => m.key === 'mch_oven')!
+    const started = await unwrap(a.craftStart({ machineId: oven.id, recipeKey: 'rcp_ingr_flour', batch: 2 }))
+    expect(started.job.state).toBe('cooking')
+    // Вход списан немедленно (осталась 1 пшеница).
+    expect((await unwrap(a.getInventory())).items.crop_wheat).toBe(1)
+
+    // Забрать раньше времени нельзя (таймер-дедлайн).
+    const early = await a.craftCollect({ jobIds: [started.job.id] })
+    expect(early.ok).toBe(false)
+
+    clock.advance(301 * 1000)
+    const collected = await unwrap(a.craftCollect({ jobIds: [started.job.id] }))
+    expect(collected.items[0]?.key).toBe('ingr_flour')
+    expect(collected.items[0]?.qty).toBe(2)
+
+    // 4. ПРОДАЙ НА ЯРМАРКЕ: выставляем муку, пассивная продажа за окно.
+    await unwrap(a.fairOpen({ stallId: 'x' }))
+    await unwrap(a.fairList({ stallId: 'x', lots: [{ itemKey: 'ingr_flour', qty: 1, quality: 1, price: 10 }] }))
+    const bucksBeforeFair = (await unwrap(a.getWallet())).bucks
+    clock.advance(HOUR_MS) // пассив продаёт ≥1 ед.
+    const bucksAfterFair = (await unwrap(a.getWallet())).bucks
+    expect(bucksAfterFair).toBeGreaterThan(bucksBeforeFair)
+
+    // 5. ВКЛАД В ИВЕНТ: жертвуем оставшуюся муку в котёл (донат ценнее).
+    const evBefore = await unwrap(a.getEvent())
+    const contrib = await unwrap(a.eventContribute({ itemKey: 'ingr_flour', qty: 1, channel: 'donate' }))
+    expect(contrib.personalFp).toBeGreaterThan(0)
+    const evAfter = await unwrap(a.getEvent())
+    expect(evAfter.personalFp).toBeGreaterThanOrEqual(evBefore.personalFp + 1)
+
+    // 6. ROLLOVER НЕДЕЛИ: перематываем в следующую неделю.
+    const calBefore = await unwrap(a.getCalendar())
+    clock.advance(WEEK_MS)
+    const calAfter = await unwrap(a.getCalendar())
+    expect(calAfter.weekIndex).toBe(calBefore.weekIndex + 1)
+    // Личный вклад ивента обнулился на новой неделе.
+    const evNewWeek = await unwrap(a.getEvent())
+    expect(evNewWeek.personalFp).toBe(0)
+    expect(evNewWeek.meter.eventKey).toBeDefined()
+  })
+})
+
+describe('LocalBackendAdapter — симулированный город (25 NPC, кооп, ивент-боты)', () => {
+  it('ростер города — 25 соседей и стриты', async () => {
+    const a = newAdapter(makeClock(MONDAY_0100))
+    const town = await unwrap(a.getTown())
+    expect(town.roster).toHaveLength(25)
+    expect(town.streets.length).toBeGreaterThanOrEqual(2)
+    expect(town.coopOrders.length).toBeGreaterThan(0)
+  })
+
+  it('боты наполняют котёл ивента со временем', async () => {
+    const clock = makeClock(MONDAY_0100)
+    const a = newAdapter(clock)
+    const ev0 = await unwrap(a.getEvent())
+    clock.advance(6 * HOUR_MS)
+    const ev1 = await unwrap(a.getEvent())
+    expect(ev1.meter.meterFp).toBeGreaterThan(ev0.meter.meterFp)
+    expect(ev1.meter.goalFp).toBeGreaterThan(0)
+  })
+
+  it('боты закрывают требования кооп-заказа со временем', async () => {
+    const clock = makeClock(MONDAY_0100)
+    const a = newAdapter(clock)
+    const before = await unwrap(a.getTown())
+    const filledBefore = before.coopOrders[0]!.requirements.reduce((s, r) => s + r.filled, 0)
+    clock.advance(12 * HOUR_MS)
+    const after = await unwrap(a.getTown())
+    const filledAfter = after.coopOrders[0]!.requirements.reduce((s, r) => s + r.filled, 0)
+    expect(filledAfter).toBeGreaterThan(filledBefore)
+  })
+})
+
+describe('LocalBackendAdapter — персист (эмуляция IndexedDB через общий стор)', () => {
+  it('состояние мира переживает пересоздание адаптера', async () => {
+    const store = createWorldStore('memory')
+    const clock = makeClock(MONDAY_0100)
+    const a1 = createLocalAdapter({ clock, store, userId: 'p', townId: 't' })
+    await a1.init()
+    await unwrap(a1.sow({ slot: 2, seedKey: 'seed_tomato' }))
+    const walletA1 = await unwrap(a1.getWallet())
+
+    // Новый инстанс адаптера поверх ТОГО ЖЕ стора — читает сохранённый мир.
+    const a2 = createLocalAdapter({ clock, store, userId: 'p', townId: 't' })
+    const farm = await unwrap(a2.getFarm())
+    expect(farm.plots.find((p) => p.slot === 2)?.state).toBe('growing')
+    const walletA2 = await unwrap(a2.getWallet())
+    expect(walletA2.bucks).toBe(walletA1.bucks)
+  })
+})
+
+describe('LocalBackendAdapter — анти-чит валидация', () => {
+  it('sow в занятую грядку — conflict', async () => {
+    const a = newAdapter(makeClock(MONDAY_0100))
+    await unwrap(a.sow({ slot: 0, seedKey: 'seed_tomato' }))
+    const again = await a.sow({ slot: 0, seedKey: 'seed_tomato' })
+    expect(again.ok).toBe(false)
+    if (!again.ok) expect(again.error.code).toBe('conflict')
+  })
+
+  it('craft без входов — insufficient_stock', async () => {
+    const a = newAdapter(makeClock(MONDAY_0100))
+    const farm = await unwrap(a.getFarm())
+    const oven = farm.machines.find((m) => m.key === 'mch_oven')!
+    const res = await a.craftStart({ machineId: oven.id, recipeKey: 'rcp_ingr_flour', batch: 1 })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.code).toBe('insufficient_stock')
+  })
+
+  it('продажа отсутствующего стока — insufficient_stock', async () => {
+    const a = newAdapter(makeClock(MONDAY_0100))
+    const res = await a.sellToMarket({ itemKey: 'crop_tomato', qty: 10 })
+    expect(res.ok).toBe(false)
+  })
+
+  it('кооп-вклад после дедлайна — window_closed', async () => {
+    const clock = makeClock(MONDAY_0100)
+    const a = newAdapter(clock)
+    const town = await unwrap(a.getTown())
+    const order = town.coopOrders[0]!
+    // Дедлайн Чт 23:59; перематываем в Пт (в ту же неделю — до rollover Вс 23:59).
+    clock.advance(4 * 24 * HOUR_MS)
+    const res = await a.coopContribute({ orderId: order.id, itemKey: order.requirements[0]!.itemKey, qty: 1 })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.code).toBe('window_closed')
+  })
+})

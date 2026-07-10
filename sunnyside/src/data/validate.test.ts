@@ -135,24 +135,52 @@ describe('content catalogs: ссылочная целостность', () => {
   )
 
   testWhenPresent(
-    '[Recipe] цена выхода превышает себестоимость входов (положительная маржа)',
+    '[Recipe] цена продажи блюда превышает себестоимость сырья (положительная маржа)',
     [recipesSpec, ingredientsSpec],
     () => {
       const recipes = loadCatalog<Recipe>(recipesSpec)!
       const ingredients = loadCatalog<Ingredient>(ingredientsSpec)!
       const priceByKey = new Map(ingredients.map((i) => [i.key, i.basePrice]))
+      // Первый рецепт-производитель для каждого output-ключа (у некоторых блюд/полуфабрикатов
+      // несколько рецептов — напр. прямой крафт дерева, 06-recipes §3.7; для раскрытия
+      // себестоимости берём любой корректный путь до сырья).
+      const recipeByOutput = new Map<string, Recipe>()
+      for (const r of recipes) if (!recipeByOutput.has(r.output.key)) recipeByOutput.set(r.output.key, r)
+
+      // «Себестоимость входов» = рыночная стоимость РАСХОДНОГО СЫРЬЯ, а не перепродажная
+      // цена промежуточных произведённых товаров. Полуфабрикат/блюдо-вход раскрываем
+      // РЕКУРСИВНО до листьев-сырья (crop_*/животные продукты/каталог-товары без рецепта).
+      // Иначе инвариант ложно отвергает (а) дерево-финалы, где база блюда по дизайну равна
+      // базе промежуточного (Cherry Pie à la Mode #21 = Cherry Pie + Custard, обе база $75;
+      // маржа копится через mastery ★, 06-recipes §3.3), и (б) полуфабрикаты, которые в
+      // перепродаже дешевле сырья (Butter < Milk×2 — его крафтят под рецепты, не на продажу).
+      const rawCost = (key: string, stack: readonly string[] = []): number => {
+        const r = recipeByOutput.get(key)
+        if (!r) {
+          const p = priceByKey.get(key)
+          return p === undefined ? NaN : p // отсутствие ключа-листа словит [Recipe→Ingredient]
+        }
+        if (stack.includes(key)) return NaN // защита от цикла в графе рецептов
+        const next = [...stack, key]
+        const inputsCost = r.inputs.reduce((sum, input) => sum + rawCost(input.key, next) * input.qty, 0)
+        return inputsCost / r.output.qty // на одну единицу выхода
+      }
+
+      // Инвариант проверяем на КОНЕЧНЫХ блюдах (output.itemClass 'dish' — то, что продаётся
+      // NPC). Промежуточные полуфабрикаты не продаются с маржой сами по себе; их вклад учтён
+      // внутри rawCost блюда, а сквозная прибыльность всей цепочки крафта гарантируется этой
+      // же проверкой на её финале.
       for (const recipe of recipes) {
-        const cost = recipe.inputs.reduce((sum, input) => {
-          const price = priceByKey.get(input.key)
-          // Себестоимость неизвестного входа не считаем 0 молча — это словит
-          // предыдущая проверка (Recipe→Ingredient); здесь просто не искажаем сумму.
-          return price === undefined ? sum : sum + price * input.qty
-        }, 0)
+        if (recipe.output.itemClass !== 'dish') continue
         const outputPrice = priceByKey.get(recipe.output.key)
-        if (outputPrice === undefined) continue
+        if (outputPrice === undefined) continue // словит [Recipe→Ingredient]
+        const perUnitCost =
+          recipe.inputs.reduce((sum, input) => sum + rawCost(input.key, [recipe.output.key]) * input.qty, 0) /
+          recipe.output.qty
+        if (Number.isNaN(perUnitCost)) continue // отсутствующий вход — зона [Recipe→Ingredient]
         expect(
-          outputPrice > cost,
-          `рецепт "${recipe.key}": цена выхода (${outputPrice}) должна быть больше себестоимости входов (${cost})`,
+          outputPrice > perUnitCost,
+          `рецепт "${recipe.key}": цена продажи блюда (${outputPrice}) должна быть больше себестоимости сырья (${perUnitCost.toFixed(2)})`,
         ).toBe(true)
       }
     },
@@ -170,6 +198,29 @@ describe('content catalogs: ссылочная целостность', () => {
           machineKeys.has(recipe.machineKey),
           `рецепт "${recipe.key}" ссылается на несуществующий станок "${recipe.machineKey}"`,
         ).toBe(true)
+      }
+    },
+  )
+
+  // --- StateContent.highlights → Ingredient ------------------------------------
+  // Хайлайт-продукты стопа роуд-трипа (07-expeditions §3.1/§4.2) — ссылки на реальные
+  // ключи каталога ингредиентов. Ловит рассинхрон плейсхолдеров между states.ts и
+  // ingredients.ts (были `prod_*`, которых нет в каталоге — унифицированы в states.ts).
+
+  testWhenPresent(
+    '[StateContent→Ingredient] highlights ссылаются на существующие ингредиенты',
+    [statesSpec, ingredientsSpec],
+    () => {
+      const states = loadCatalog<StateContent>(statesSpec)!
+      const ingredients = loadCatalog<Ingredient>(ingredientsSpec)!
+      const ingredientKeys = new Set(ingredients.map((i) => i.key))
+      for (const state of states) {
+        for (const key of state.highlights) {
+          expect(
+            ingredientKeys.has(key),
+            `штат "${state.key}": highlight "${key}" не найден среди ингредиентов`,
+          ).toBe(true)
+        }
       }
     },
   )

@@ -159,6 +159,7 @@
 | 50 | Sweet Potato | Батат | Грядка | 3 ч | 2.10 | 7.00 | Blue Plate гарниры, BBQ Platter |
 | 51 | Snap Peas | Сахарный горошек | Грядка | 2 ч | 1.60 | 5.50 | гарниры |
 | 52 | Honey | Мёд | Животное (Пчёлы, `bld_apiary` — Пасека, 9-я постройка) | 5 ч цикл | 3.00 | 9.50 | Honey Cornbread, Pecan Praline |
+| 52a | Goat Milk | Козье молоко | Животное (Коза, `bld_barn`) | 180 мин цикл | ~14.00 | 48.00 | сыр/десерты (сверка каталогов) — коза есть в `03-animals.md` §3.2.2, но отсутствовала здесь; строка добавлена, чтобы `animals.ts` (`an_goat.productKey='goat_milk'`) резолвился в каталог ингредиентов (см. `ingredients.ts` `goat_milk`) |
 | 53 | Beef | Говядина | Экспедиция (`st_illinois`, Chicago, 6 ч) | 6 ч | 4.50 | 14.00 | Beef Chili, Cheeseburger Deluxe |
 | 54 | Pecan | Пекан | Экспедиция (`st_tennessee`, Nashville, 5 ч) | 5 ч | 3.80 | 12.50 | Pecan Praline |
 | 55 | Green Coffee Beans | Зелёные кофейные зёрна | Экспедиция (`st_illinois`, 6 ч) | 6 ч | 3.50 | 11.00 | сырьё Roasted Coffee |

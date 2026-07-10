@@ -16,10 +16,15 @@ import type {
   RpcResult,
   EpochMs,
   UUID,
+  Quality,
+  Result,
   // reads
   Wallet,
   FarmSnapshot,
   InventorySnapshot,
+  ProductKey,
+  StorageKind,
+  StorageLimits,
   ServerCalendar,
   DemandBoard,
   TownSnapshot,
@@ -253,6 +258,59 @@ export interface AnimalSystem {
 
 export interface MarketSystem {
   sell(itemKey: string, qty: number): Promise<RpcResult<SellToMarketRes>>
+}
+
+/** Один просроченный/активный стек буфера перелива склада (canon E3, 02-farm §3.11). */
+export interface InventoryOverflowEntry {
+  id: UUID
+  kind: StorageKind
+  itemKey: ProductKey
+  qty: number
+  quality: Quality
+  createdAt: EpochMs
+  /** createdAt + 24ч (гипотеза, 02-farm §3.11 п.1) — после этого буфер разбирается (Potluck/подарок). */
+  expiresAt: EpochMs
+}
+
+/**
+ * InventorySystem — ЧИСТАЯ логика склада (02-farm §3.11/§4.4): лимиты Silo/Icehouse,
+ * стоимость апгрейда, резервирование стока под очереди крафта (не даёт задвоить списание
+ * между конкурентными `CraftSystem.start`), буфер перелива при достижении лимита.
+ *
+ * Сама ёмкость/апгрейд склада — building_upgrade через `FarmSystem.upgradeBuilding`
+ * (buildingKey `bld_silo`/`bld_icehouse`); этот контракт — только предсказание/локальная
+ * бухгалтерия для UI, истина инвентаря — `InventorySnapshot` с сервера (не ходит в adapter).
+ */
+export interface InventorySystem {
+  /** Ёмкость Silo/Icehouse по уровню построек (§4.4: base + step·(level−1)); general — Infinity. */
+  storageLimits(siloLevel: number, icehouseLevel: number): StorageLimits
+  /** Стоимость апгрейда склада ДО уровня `level` (§4.4: round(200·1.32^(level−1), −10); level 1 → 0). */
+  upgradeCost(level: number): number
+  /** Свободное место в хранилище данного вида с учётом уже занятого и резервированного стока. */
+  freeCapacity(kind: StorageKind, currentQty: number, limit: number): number
+  /** Резервирует `qty` предмета под очередь крафта; `insufficient_stock`, если свободного (не резервированного) стока не хватает. */
+  reserve(itemKey: ProductKey, qty: number, availableQty: number): Result<UUID, 'insufficient_stock'>
+  /** Освобождает ранее сделанный резерв (id из `reserve`); `false`, если резерв не найден. */
+  release(reservationId: UUID): boolean
+  /** Суммарно зарезервировано данного предмета прямо сейчас (снижает доступное для трат/повторного резерва). */
+  reservedQty(itemKey: ProductKey): number
+  /**
+   * Кладёт `qty` на склад с учётом лимита: то, что не влезло, уходит в буфер перелива
+   * (canon E3) на 24ч без штрафа вместо потери сбора.
+   */
+  add(
+    kind: StorageKind,
+    itemKey: ProductKey,
+    qty: number,
+    quality: Quality,
+    currentQty: number,
+    limit: number,
+    now: EpochMs,
+  ): { stored: number; overflow: InventoryOverflowEntry | null }
+  /** Все ещё живые (не просроченные) записи буфера перелива. */
+  listOverflow(): InventoryOverflowEntry[]
+  /** Возвращает и вычищает записи буфера, чей 24ч-таймер истёк к `now` (Potluck/подарок соседям). */
+  sweepExpiredOverflow(now: EpochMs): InventoryOverflowEntry[]
 }
 
 export interface FairSystem {
