@@ -67,6 +67,7 @@ export type NoticeKind =
   | 'no-customer'
   | 'customer-left'
   | 'time-up'
+  | 'no-food'
   | 'harvest'
   | 'withered'
   | 'too-far'
@@ -207,6 +208,16 @@ export function craftableCount(recipe: RecipeId, inventory: Inventory): number {
   const needs = RECIPES[recipe].needs
   const ids = Object.keys(needs) as ItemId[]
   return ids.reduce((min, item) => Math.min(min, Math.floor(inventory[item] / needs[item]!)), Infinity)
+}
+
+/**
+ * Что герой прямо сейчас в состоянии приготовить. Только это и показывает меню
+ * выдачи: кнопка блюда, на которое не хватает, — приглашение к ошибке.
+ *
+ * Список пуст — торговать нечем, и день ярмарки на этом кончается.
+ */
+export function cookableRecipes(knownRecipes: RecipeId[], inventory: Inventory): RecipeId[] {
+  return knownRecipes.filter((r) => craftableCount(r, inventory) > 0)
 }
 
 export interface Customer {
@@ -601,6 +612,14 @@ export const useGameStore = create<GameState>()(
             return {
               truck: { ...t, timeLeft: 0, ended: true },
               ...withNotice(s, { kind: 'time-up' }),
+            }
+          }
+          // Ни на одно блюдо не хватает — торговать нечем. Держать очередь до
+          // конца таймера незачем: ничего, кроме отказов, герой ей не выдаст.
+          if (!cookableRecipes(s.knownRecipes, s.inventory).length) {
+            return {
+              truck: { ...t, timeLeft, ended: true },
+              ...withNotice(s, { kind: 'no-food' }),
             }
           }
           // Терпение убывает, ушедших клиентов убираем — и сообщаем о них.
