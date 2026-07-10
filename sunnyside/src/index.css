@@ -1,0 +1,21 @@
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #101014;
+  color: #f5ecd6;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Табличные числа для балансов валют (canon §2.1). */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
