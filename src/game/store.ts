@@ -9,18 +9,14 @@
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { resetClock } from './dayClock'
 import { emptyToolbar, moveItem, reconcileToolbar, type ToolbarLayout } from './toolbar'
+import type { CropId, ForageId, Inventory, ItemId, Seeds } from './items'
 
-export type CropId = 'carrot' | 'greens' | 'tomato'
-
-/**
- * Лесные находки. Их не сажают и не покупают — их находят, поэтому у них нет
- * ни семян, ни цены. Отдельный тип от CropId: в грядку гриб не воткнёшь.
- */
-export type ForageId = 'mushroom' | 'egg'
-
-/** Всё, что лежит в сумке героя: и урожай, и находки. */
-export type ItemId = CropId | ForageId
+// Предметы живут в items.ts — иначе store и toolbar импортировали бы друг
+// друга по кругу. Реэкспорт, чтобы остальной код по-прежнему брал их отсюда.
+export { CROPS, FORAGE_IDS, ITEM_IDS } from './items'
+export type { CropId, ForageId, Inventory, ItemId, Seeds } from './items'
 
 export type RecipeId = 'salad' | 'soup' | 'taco' | 'mushroom_soup' | 'omelette'
 export type Phase = 'farm' | 'truck'
@@ -93,12 +89,6 @@ export interface Notice {
 /** Сколько тостов держим на экране одновременно. */
 const MAX_NOTICES = 4
 
-/** Сумка героя. Находки лежат в ней рядом с урожаем — тратятся они одинаково. */
-export type Inventory = Record<ItemId, number>
-
-/** Семена на руках. Только культуры: находки не сеют. */
-export type Seeds = Record<CropId, number>
-
 /**
  * Цвет одежды героя. Хранится строкой `#rrggbb`: сцена красит им материал
  * `Hero`, портрет в инвентаре — тот же цвет. Значение по умолчанию совпадает
@@ -126,13 +116,6 @@ export const SLOT_IDS: SlotId[] = Array.from({ length: BEDS }, (_, bed) =>
   Array.from({ length: SLOTS_PER_BED }, (_, slot) => `${bed}:${slot}`),
 ).flat()
 
-export const CROPS: CropId[] = ['carrot', 'greens', 'tomato']
-
-export const FORAGE_IDS: ForageId[] = ['mushroom', 'egg']
-
-/** Порядок ячеек в сумке: сперва урожай, потом находки. */
-export const ITEM_IDS: ItemId[] = [...CROPS, ...FORAGE_IDS]
-
 /** Индекс грядки из slotId (`${bed}:${slot}`). */
 export function bedOf(slotId: SlotId): number {
   return Number(slotId.split(':')[0])
@@ -158,6 +141,39 @@ export const BASE_RECIPE_IDS: RecipeId[] = ['salad', 'soup', 'taco']
 export const FORAGE_RECIPE: Record<ForageId, RecipeId> = {
   mushroom: 'mushroom_soup',
   egg: 'omelette',
+}
+
+/**
+ * Шанс, что за ночь находка вернётся на своё место.
+ *
+ * Раньше возвращались все и каждую ночь — лес отдавал 24 гриба и 12 яиц за
+ * неделю при спросе в четыре и четыре. Бесплатные ингредиенты обесценивали
+ * грядки, и экономика держалась только на том, что игрок не ходил в лес.
+ *
+ * Числа сняты со спроса. За день ярмарки игрок обслуживает 8–10 клиентов,
+ * заказы равномерны по пяти рецептам — значит за неделю у него просят около
+ * двух грибных супов (4 гриба) и двух яичниц (4 яйца).
+ *
+ * Три грибные точки при 0.2 дают ≈6 грибов за неделю: спрос закрыт с запасом.
+ * Единственное гнездо при 0.5 — ≈3.5 яйца, то есть меньше двух порций. Яичница
+ * так и задумана: её не наготовишь впрок.
+ */
+export const MUSHROOM_REGROW = 0.2
+export const EGG_REGROW = 0.5
+
+/** Шанс восстановления точки по её id (`mushroom:0`, `egg:0`). */
+export function regrowChance(spotId: string): number {
+  return spotId.startsWith('egg:') ? EGG_REGROW : MUSHROOM_REGROW
+}
+
+/**
+ * Прогоняет ночь над собранными точками и возвращает те, что остались пустыми.
+ *
+ * Чистая функция с явным источником случайности: иначе ночь в лесу нельзя
+ * проверить тестом, не подменяя Math.random глобально.
+ */
+export function regrowForage(taken: readonly string[], rand: () => number = Math.random): string[] {
+  return taken.filter((id) => rand() >= regrowChance(id))
 }
 
 /**
@@ -522,7 +538,10 @@ export const useGameStore = create<GameState>()(
           }
         }),
 
-      endDay: () =>
+      // Часы суток тикают снаружи стора (см. dayClock): сутки кончились сами или
+      // игрок нажал «Закончить день» — в обоих случаях наступает утро.
+      endDay: () => {
+        resetClock()
         set((s) => {
           let withered = 0
           const slots = s.slots.map((slot): Slot => {
@@ -551,11 +570,13 @@ export const useGameStore = create<GameState>()(
             day,
             phase,
             truck,
-            // За ночь в лесу вырастают новые грибы, а в гнёзда возвращаются яйца.
-            takenForage: [],
+            // Лес отрастает не весь и не сразу: каждая собранная точка бросает
+            // свой шанс вернуться (см. MUSHROOM_REGROW / EGG_REGROW).
+            takenForage: regrowForage(s.takenForage),
             ...(withered ? withNotice(s, { kind: 'withered', amount: withered }) : {}),
           }
-        }),
+        })
+      },
 
       serve: (recipeId) => {
         const s = get()
@@ -686,8 +707,10 @@ export const useGameStore = create<GameState>()(
       // Грядки не подметаем: несобранный урожай и всходы — тоже труд игрока,
       // и ярмарка не повод их выкорчёвывать.
       // Знание рецептов тоже переезжает: гриб, найденный однажды, не
-      // забывается. Точки собирательства, наоборот, обнуляются.
-      nextWeek: () =>
+      // забывается. Лес, наоборот, поднимается целиком: за ярмарку и дорогу
+      // обратно успевает вырасти всё, что игрок унёс.
+      nextWeek: () => {
+        resetClock()
         set(() => ({
           day: 1,
           phase: 'farm',
@@ -695,10 +718,14 @@ export const useGameStore = create<GameState>()(
           truck: null,
           shopOpen: false,
           notices: [],
-        })),
+        }))
+      },
 
       // Музыка переживает сброс: это настройка звука, а не игровой прогресс.
-      resetGame: () => set((s) => ({ ...initialData(), musicOn: s.musicOn })),
+      resetGame: () => {
+        resetClock()
+        set((s) => ({ ...initialData(), musicOn: s.musicOn }))
+      },
     }),
     {
       name: 'farm-truck',
