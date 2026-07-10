@@ -23,14 +23,8 @@ import type { ThreeEvent } from '@react-three/fiber'
 import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import { applyPalette, CROP_ASSET, type Palette, type Vec3 } from '../assets/scene'
-import {
-  CROPS,
-  slotActionable,
-  useGameStore,
-  type CropId,
-  type Slot as SlotState,
-  type Tool,
-} from '../game/store'
+import { CROPS, slotActionable, useGameStore, type CropId } from '../game/store'
+import { refusal, slotLabel } from './slotText'
 import { clearHoverLabel, setHoverLabel } from './hoverLabel'
 import { say } from './heroSpeech'
 import { SpeechBubble } from './SpeechBubble'
@@ -153,78 +147,6 @@ function LuckyStars() {
       ))}
     </group>
   )
-}
-
-/** Названия культур для подсказки. Дубль ui/crops.ts: scene/ туда не ходит. */
-const CROP_TITLE: Record<CropId, string> = {
-  carrot: '🥕 Морковь',
-  greens: '🥬 Зелень',
-  tomato: '🍅 Томат',
-}
-
-/**
- * Сколько ночей растению до созревания: политое поднимается на стадию за ночь,
- * значит их столько, сколько стадий не хватает.
- */
-function nightsLeft(stage: number): number {
-  return Math.max(0, 2 - stage)
-}
-
-/** «1 день», «2 дня» — считать надо, а не приписывать «дн.». */
-function days(n: number): string {
-  return n === 1 ? '1 день' : `${n} дня`
-}
-
-function ripeLine(stage: number): string {
-  const left = nightsLeft(stage)
-  return left === 0 ? 'Созрело — можно собирать' : `До урожая: ${days(left)}`
-}
-
-/** Полив читается значком: капля — сухо, галочка — полито. */
-const waterLine = (watered: boolean) => (watered ? '✅ Полито' : '💧 Не полито')
-
-/**
- * Что показать по ховеру.
- *
- * Про полив говорим только растущему: пустой грядке он ничего не обещает, а
- * созревшей уже не нужен — собирают её и сухой.
- */
-function slotLabel(slot: SlotState): { title: string; lines: string[] } {
-  if (!slot.crop) return { title: 'Пустая грядка', lines: ['Тут можно посадить семена'] }
-  const ripe = slot.stage === 2
-  return {
-    title: CROP_TITLE[slot.crop],
-    lines: ripe ? [ripeLine(slot.stage)] : [ripeLine(slot.stage), waterLine(slot.watered)],
-  }
-}
-
-/**
- * Что герой скажет на клик, который ничего не даст.
- *
- * Молчать нельзя: игрок ткнул, курсор показал «нельзя», а почему — непонятно.
- * Реплика произносится сразу, на месте: она про то, что у героя в руках, а не
- * про грядку, и идти ради неё через полкарты незачем.
- */
-function refusal(
-  slot: SlotState,
-  tool: Tool,
-  hasSeed: boolean,
-  hasAnySeed: boolean,
-): string | null {
-  if (!slot.crop) {
-    // Пустая сумка важнее выбранного инструмента: советовать «выбери семена»
-    // тому, у кого их нет ни одного, — издевательство.
-    if (!hasAnySeed) return 'У меня нет семян для посадки. Нужно купить.'
-    if (tool !== 'seed') return 'Мне надо выбрать семена для посадки.'
-    if (!hasSeed) return 'Эти семена кончились. Надо выбрать другие.'
-    return null
-  }
-  if (tool === 'hand' && slot.stage < 2) {
-    const wait = `Пока рано. Урожай будет через ${days(nightsLeft(slot.stage))}.`
-    // Сухой росток до урожая и не доживёт — герой напоминает об этом сразу.
-    return slot.watered ? wait : `${wait} Сейчас его надо полить.`
-  }
-  return null
 }
 
 export function Slot({
