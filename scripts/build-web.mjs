@@ -38,11 +38,12 @@ function step(msg) {
  * Запуск команды с наследованием stdio. Бросает при ненулевом коде —
  * чтобы Vercel-сборка падала явно, а не отдавала полупустое дерево.
  */
-function run(cmd, args, cwd) {
+function run(cmd, args, cwd, extraEnv) {
   process.stdout.write(`  $ ${cmd} ${args.join(' ')}  (cwd: ${cwd})\n`)
   const res = spawnSync(cmd, args, {
     cwd,
     stdio: 'inherit',
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
     // pnpm/vite ставятся как .cmd на Windows; shell:true делает вызов кросс-платформенным.
     shell: process.platform === 'win32',
   })
@@ -122,7 +123,14 @@ step('(б) Sunnyside: pnpm install + tsc -b + vite build --base=/sunnyside/')
 run('pnpm', ['install', '--ignore-workspace', '--prod=false'], join(ROOT, 'sunnyside'))
 // tsc -b — как в sunnyside "build": сначала типы (strict-гейт), затем бандл.
 run('pnpm', ['exec', 'tsc', '-b'], join(ROOT, 'sunnyside'))
-run('pnpm', ['exec', 'vite', 'build', '--base=/sunnyside/'], join(ROOT, 'sunnyside'))
+// VITE_BACKEND_ADAPTER=local — публичная витрина-развилка собирается на локальном
+// (браузерном, IndexedDB) адаптере: полностью играбельный сингл-плеер без Supabase-ключей
+// в бандле и без замусоривания живой БД анонимами. NET-5 честит ЯВНЫЙ local (не молчаливый
+// фолбэк). Для мультиплеерной сборки против живого бэкенда — задать вместо этого
+// VITE_BACKEND_ADAPTER=supabase + VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY.
+run('pnpm', ['exec', 'vite', 'build', '--base=/sunnyside/'], join(ROOT, 'sunnyside'), {
+  VITE_BACKEND_ADAPTER: process.env.VITE_BACKEND_ADAPTER || 'local',
+})
 
 step('    Копирование sunnyside/dist/* в dist/sunnyside/')
 const sunnyBuilt = join(ROOT, 'sunnyside', 'dist')

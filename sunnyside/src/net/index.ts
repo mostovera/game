@@ -26,23 +26,30 @@ export const createBackendAdapter: CreateBackendAdapter = (
 ): BackendAdapter => {
   const url = import.meta.env.VITE_SUPABASE_URL
   const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-  const requested = kind ?? import.meta.env.VITE_BACKEND_ADAPTER ?? 'local'
+  // Явно запрошенный адаптер (аргумент или env). undefined = «выбор не сделан».
+  const requestedExplicit = kind ?? import.meta.env.VITE_BACKEND_ADAPTER
+  const requested = requestedExplicit ?? 'local'
 
   if (requested === 'supabase' && url && key) {
     return createSupabaseAdapter({ url, publishableKey: key })
   }
 
-  // NET-5: fail-closed. Локальный адаптер — клиент-авторитетный (минтит ресурсы в браузере,
-  // DevTimeskip). Молчаливый откат на него в прод-сборке = чит-песочница под видом прода.
-  // В проде (или при явном VITE_REQUIRE_SUPABASE=true) — бросаем громко, а не деградируем.
-  const requireSupabase = import.meta.env.PROD
-    || import.meta.env.VITE_REQUIRE_SUPABASE === 'true'
+  // NET-5: fail-closed против МОЛЧАЛИВОГО отката. Локальный адаптер клиент-авторитетный
+  // (минтит ресурсы в браузере, DevTimeskip) — в проде он опасен ТОЛЬКО когда включился сам,
+  // без явного выбора («чит-песочница под видом прода»). Поэтому:
+  //   • ЯВНЫЙ VITE_BACKEND_ADAPTER=local (демо/сингл-плеер сборка) — честный выбор, разрешён;
+  //   • прод БЕЗ явного выбора — бросаем громко (иначе тихо станем песочницей);
+  //   • VITE_REQUIRE_SUPABASE=true — жёсткое требование supabase, перекрывает даже явный local.
+  const explicitLocal = requestedExplicit === 'local'
+  const requireSupabase = import.meta.env.VITE_REQUIRE_SUPABASE === 'true'
+    || (import.meta.env.PROD && !explicitLocal)
   if (requireSupabase) {
     throw new Error(
       `[net] fail-closed: требуется supabase-адаптер, но requested='${requested}', `
       + `VITE_SUPABASE_URL=${url ? 'set' : 'MISSING'}, `
       + `VITE_SUPABASE_PUBLISHABLE_KEY=${key ? 'set' : 'MISSING'}. `
-      + `Задай VITE_BACKEND_ADAPTER=supabase и оба ключа проекта.`,
+      + `Задай VITE_BACKEND_ADAPTER=supabase и оба ключа проекта, `
+      + `либо VITE_BACKEND_ADAPTER=local для демо-сборки на локальном адаптере.`,
     )
   }
   return createLocalAdapter({ clock: storeClock })
