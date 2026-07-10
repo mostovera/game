@@ -30,7 +30,6 @@ import { FACE_EPS, hero, HERO_RADIUS } from './heroState'
 import { clearIntent } from './intent'
 import { resolveCollisions, type Collider } from './collision'
 import { getSpeech, subscribeSpeech } from './heroSpeech'
-import { faceForNotice, getExpression, subscribeFace } from './heroFace'
 import { applyEyes, Blinker, collectEyes, gazeTarget } from './heroEyes'
 import { pointerNDC, trackPointer } from './pointer'
 import { HeroBubble } from './HeroBubble'
@@ -153,7 +152,6 @@ export function Hero({
   )
 
   const eyes = useMemo(() => collectEyes(model), [model])
-  const expression = useSyncExternalStore(subscribeFace, getExpression, getExpression)
   const blinker = useRef(new Blinker())
   const gaze = useRef(new THREE.Vector3())
   const hasGaze = useRef(false)
@@ -161,17 +159,6 @@ export function Hero({
   // Курсор слушаем у окна, а не у канваса: за открытой лавкой герой иначе
   // перестал бы следить за мышью — модалка съедает pointermove.
   useEffect(() => trackPointer(canvas), [canvas])
-
-  // Игровое событие → гримаса. Реагируем только на тост, которого ещё не
-  // видели: когда истёкший тост уходит с экрана, последним снова становится
-  // предыдущий, и без этой проверки лицо переигрывало бы старое событие.
-  const notice = useGameStore((s) => s.notices.at(-1))
-  const seen = useRef(0)
-  useEffect(() => {
-    if (!notice || notice.id <= seen.current) return
-    seen.current = notice.id
-    faceForNotice(notice.kind, notice.amount)
-  }, [notice])
 
   const group = useRef<THREE.Group>(null)
   const phase = useRef(0)
@@ -186,6 +173,20 @@ export function Hero({
   // Переиспользуем векторы: useFrame не место для аллокаций.
   const fwd = useRef(new THREE.Vector3())
   const right = useRef(new THREE.Vector3())
+
+  /**
+   * Глаза: моргание и взгляд за курсором. Зовётся из обеих веток кадра —
+   * и с фермы, и из-за прилавка. Иначе в день торговли зрачки замирали бы в
+   * той позе, в какой их застал седьмой день.
+   */
+  const updateEyes = (g: THREE.Group, dt: number) => {
+    if (!eyes.length) return
+    // Цель взгляда ищем на уровне глаз: курсор в небе плоскость не пересекает —
+    // тогда держим прежнюю цель, а не роняем взгляд в ноль.
+    const eyeY = g.position.y + eyes[0].center.y
+    if (gazeTarget(pointerNDC(), camera, eyeY, gaze.current)) hasGaze.current = true
+    applyEyes(eyes, g, hasGaze.current ? gaze.current : null, blinker.current.step(dt), dt)
+  }
 
   useFrame((_, rawDt) => {
     const g = group.current
@@ -224,6 +225,7 @@ export function Hero({
       if (legs.r) legs.r.rotation.x = -swingT
 
       heroTarget.set(g.position.x, 0, g.position.z) // чтобы по возврату на ферму не убежал
+      updateEyes(g, dt)
       return
     }
 
@@ -304,20 +306,7 @@ export function Hero({
     if (legs.l) legs.l.rotation.x = swing
     if (legs.r) legs.r.rotation.x = -swing
 
-    // Лицо. Цель взгляда ищем на уровне глаз: курсор в небе плоскость не
-    // пересекает — тогда держим прежнюю цель, а не роняем взгляд в ноль.
-    if (eyes.length) {
-      const eyeY = g.position.y + eyes[0].center.y
-      if (gazeTarget(pointerNDC(), camera, eyeY, gaze.current)) hasGaze.current = true
-      applyEyes(
-        eyes,
-        g,
-        hasGaze.current ? gaze.current : null,
-        expression,
-        blinker.current.step(dt),
-        dt,
-      )
-    }
+    updateEyes(g, dt)
   })
 
   return (

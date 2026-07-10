@@ -1,7 +1,7 @@
 /**
- * Мимика героя: моргание, гримасы и взгляд за курсором.
+ * Глаза героя: моргание и взгляд за курсором.
  *
- * Отдельно от Hero.tsx, потому что ходьба и лицо — разные механизмы, и оба
+ * Отдельно от Hero.tsx, потому что ходьба и глаза — разные механизмы, и оба
  * тикают каждый кадр. Здесь только чистая математика поз; узлы модели
  * (HeroPupilL/R, HeroLidTopL/R, HeroLidBotL/R) приходят снаружи.
  *
@@ -12,7 +12,6 @@
  * и второй копии в коде быть не должно.
  */
 import * as THREE from 'three'
-import { POSES, type Expression } from './heroFace'
 
 /** Один глаз: три узла и запомненная поза покоя век. */
 export interface Eye {
@@ -23,12 +22,16 @@ export interface Eye {
   bottomRest: number
   /** Центр яблока в системе группы героя — из позиции узла зрачка. */
   center: THREE.Vector3
-  /** +1 левый глаз (на +X модели), −1 правый. Зеркалит наклон век. */
-  sign: number
 }
 
 /** Куда смотрит зрачок: не дальше этого угла от «прямо перед собой». */
 const GAZE_LIMIT = 0.42 // рад ≈ 24°
+/**
+ * Дальше этого угла цель считается «за спиной»: глаз её не провожает, а
+ * смотрит прямо. Иначе за прилавком фудтрака герой косил бы в упор до предела —
+ * курсор там живёт на кнопках блюд, то есть у него за спиной.
+ */
+const GAZE_GIVE_UP = 1.2 // рад ≈ 69°
 const GAZE_LAMBDA = 9 // как резво зрачок догоняет курсор
 const LID_LAMBDA = 22 // веки: быстрее взгляда, иначе моргание вязкое
 
@@ -39,20 +42,12 @@ const BLINK_SEC = 0.14
 
 export function collectEyes(model: THREE.Object3D): Eye[] {
   const eyes: Eye[] = []
-  for (const [suffix, sign] of [
-    ['L', 1],
-    ['R', -1],
-  ] as const) {
+  for (const suffix of ['L', 'R'] as const) {
     const pupil = model.getObjectByName(`HeroPupil${suffix}`)
     const top = model.getObjectByName(`HeroLidTop${suffix}`)
     const bottom = model.getObjectByName(`HeroLidBot${suffix}`)
     if (!pupil || !top || !bottom) continue
 
-    // Порядок углов важен. Веко: сперва опускаем (X), потом наклоняем линию
-    // вокруг оси взгляда (Z) — «ZYX» даёт ровно Rz·Rx. Обратный порядок кренит
-    // купол до опускания, и злой глаз выходит косым, а не прищуренным.
-    top.rotation.order = 'ZYX'
-    bottom.rotation.order = 'ZYX'
     // Зрачок: сначала вверх-вниз (X), затем вбок (Y) — как настоящий глаз.
     pupil.rotation.order = 'YXZ'
 
@@ -63,8 +58,12 @@ export function collectEyes(model: THREE.Object3D): Eye[] {
       topRest: top.rotation.x,
       bottomRest: bottom.rotation.x,
       center: pupil.position.clone(),
-      sign,
     })
+  }
+
+  // Доступ из DevTools и автопроверок. В прод-сборку не попадает.
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    ;(window as unknown as { __eyes?: unknown }).__eyes = eyes
   }
   return eyes
 }
@@ -118,7 +117,7 @@ const local = new THREE.Vector3()
 const dir = new THREE.Vector3()
 
 /**
- * Ставит оба глаза: зрачки на цель, веки в позу выражения + моргание.
+ * Ставит оба глаза: зрачки на цель, веки — по фазе моргания.
  *
  * `target` — точка взгляда в мировых координатах, `group` — узел героя (по
  * нему переводим цель в локальные координаты, иначе поворот тела уводил бы
@@ -128,16 +127,9 @@ export function applyEyes(
   eyes: Eye[],
   group: THREE.Object3D,
   target: THREE.Vector3 | null,
-  expression: Expression,
   blink: number,
   dt: number,
 ) {
-  const pose = POSES[expression]
-  // Моргание перекрывает гримасу: во время моргания веки идут в ноль независимо
-  // от того, злился герой или радовался.
-  const top = Math.max(pose.top, blink)
-  const bottom = Math.max(pose.bottom, blink)
-
   if (target) group.worldToLocal(local.copy(target))
 
   for (const eye of eyes) {
@@ -146,32 +138,27 @@ export function applyEyes(
       // Модель смотрит на −Z: yaw и pitch считаем от этой оси.
       const yaw = Math.atan2(-dir.x, -dir.z)
       const pitch = Math.atan2(dir.y, Math.hypot(dir.x, dir.z))
+      const behind = Math.abs(yaw) > GAZE_GIVE_UP
       eye.pupil.rotation.y = THREE.MathUtils.damp(
         eye.pupil.rotation.y,
-        THREE.MathUtils.clamp(yaw, -GAZE_LIMIT, GAZE_LIMIT),
+        behind ? 0 : THREE.MathUtils.clamp(yaw, -GAZE_LIMIT, GAZE_LIMIT),
         GAZE_LAMBDA,
         dt,
       )
       eye.pupil.rotation.x = THREE.MathUtils.damp(
         eye.pupil.rotation.x,
-        THREE.MathUtils.clamp(pitch, -GAZE_LIMIT, GAZE_LIMIT),
+        behind ? 0 : THREE.MathUtils.clamp(pitch, -GAZE_LIMIT, GAZE_LIMIT),
         GAZE_LAMBDA,
         dt,
       )
     }
 
-    // lid = 0 → поза покоя из GLB, lid = 1 → край века на центре глаза.
-    for (const [node, rest, lid] of [
-      [eye.top, eye.topRest, top],
-      [eye.bottom, eye.bottomRest, bottom],
+    // blink = 0 → поза покоя из GLB, blink = 1 → край века на центре глаза.
+    for (const [node, rest] of [
+      [eye.top, eye.topRest],
+      [eye.bottom, eye.bottomRest],
     ] as const) {
-      node.rotation.x = THREE.MathUtils.damp(node.rotation.x, rest * (1 - lid), LID_LAMBDA, dt)
-      node.rotation.z = THREE.MathUtils.damp(
-        node.rotation.z,
-        pose.roll * eye.sign,
-        LID_LAMBDA,
-        dt,
-      )
+      node.rotation.x = THREE.MathUtils.damp(node.rotation.x, rest * (1 - blink), LID_LAMBDA, dt)
     }
   }
 }
