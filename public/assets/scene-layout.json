@@ -113,6 +113,20 @@
       ]
     },
     {
+      "asset": "seed_store",
+      "position": [
+        -3.4,
+        0.0,
+        1.2
+      ],
+      "rotationY": 0.0,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
       "asset": "tree",
       "position": [
         -0.8959,

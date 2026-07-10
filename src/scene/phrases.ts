@@ -13,6 +13,7 @@
 const TRUCK = 'Он поможет мне разбогатеть!'
 const LOG = 'Совсем скоро я смогу посидеть тут.'
 const LADYBUG = 'Она почему-то зависла и не летит. Может позже починят.'
+const STORE = 'Лавка семян. Торговать тут пока не с кем.'
 
 export const PHRASES: Record<string, string> = {
   // Божья коровка
@@ -38,4 +39,15 @@ export const PHRASES: Record<string, string> = {
   TruckAwning: TRUCK,
   TruckTrim: TRUCK,
   TruckWheel: TRUCK,
+
+  // Лавка семян: постройка молчит про товар, ящики — про свой.
+  StoreWood: STORE,
+  StoreCounter: STORE,
+  StoreRoof: STORE,
+  StoreAwning: STORE,
+  StoreSign: STORE,
+  SeedSack: STORE,
+  SeedCarrot: 'Семена моркови. Из двух вырастет суп.',
+  SeedGreens: 'Семена зелени. Без неё салат не салат.',
+  SeedTomato: 'Семена томатов. Самые дорогие, конечно.',
 }

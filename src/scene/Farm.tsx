@@ -44,13 +44,14 @@ const SINGLETON_ASSETS = [
   'log_table',
   'sit_log',
   'ladybug',
+  'seed_store',
 ] as const
 
 // Массовые пропсы — через инстансинг.
 const INSTANCED_ASSETS = ['tree', 'bush'] as const
 
 // Тень отбрасывают только эти (см. Task 1).
-const CASTERS = new Set(['house', 'greenhouse', 'food_truck', 'tree', 'raised_bed'])
+const CASTERS = new Set(['house', 'greenhouse', 'food_truck', 'tree', 'raised_bed', 'seed_store'])
 
 const PLANT_ASSETS = ['raised_bed', 'carrot', 'greens', 'tomato_bush'] as const
 
@@ -58,7 +59,14 @@ const PLANT_ASSETS = ['raised_bed', 'carrot', 'greens', 'tomato_bush'] as const
 const HERO_START: Vec3 = [1.0, 0, 2.2]
 
 // Через что герой не проходит. Дорожка и божья коровка — не препятствия.
-const SOLID_SINGLETONS = ['house', 'greenhouse', 'food_truck', 'log_table', 'sit_log'] as const
+const SOLID_SINGLETONS = [
+  'house',
+  'greenhouse',
+  'food_truck',
+  'log_table',
+  'sit_log',
+  'seed_store',
+] as const
 
 // Деревья и кусты бьются кругом по стволу: их bbox — это крона, и по нему
 // между двумя ёлками было бы не пройти.
@@ -317,6 +325,7 @@ function useColliders(layout: SceneLayout): Collider[] {
   const truck = useGLTF(propUrl('food_truck')).scene
   const logTable = useGLTF(propUrl('log_table')).scene
   const sitLog = useGLTF(propUrl('sit_log')).scene
+  const seedStore = useGLTF(propUrl('seed_store')).scene
   const bed = useGLTF(propUrl('raised_bed')).scene
 
   return useMemo(() => {
@@ -326,6 +335,7 @@ function useColliders(layout: SceneLayout): Collider[] {
       food_truck: truck,
       log_table: logTable,
       sit_log: sitLog,
+      seed_store: seedStore,
     }
     const out: Collider[] = []
 
@@ -367,7 +377,7 @@ function useColliders(layout: SceneLayout): Collider[] {
     }
 
     return out
-  }, [layout, house, greenhouse, truck, logTable, sitLog, bed])
+  }, [layout, house, greenhouse, truck, logTable, sitLog, seedStore, bed])
 }
 
 function Ground({ size, color }: { size: number; color: string }) {
