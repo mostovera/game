@@ -1,8 +1,8 @@
 # ASSETS.md — Фаза D: таблица всех ассетов Sunnyside
 
-> Автосгенерировано `scripts/gen-assets-table.mjs` — **не редактировать руками**. Источник правды — `sunnyside/src/assets/placeholders/registry.ts` (единственный мастер-реестр, registry-converge); правь его и перегоняй `node scripts/gen-assets-table.mjs` заново.
+> Автосгенерировано `scripts/gen-assets-table.mjs` — **не редактировать руками**. Источник правды — `src/assets/placeholders/registry.ts` (единственный мастер-реестр, registry-converge); правь его и перегоняй `node scripts/gen-assets-table.mjs` заново.
 > Спека-первоисточник аудио/арт-требований: `docs/specs/22-audio-visual.md`.
-> Дата генерации: 2026-07-10.
+> Дата генерации: 2026-07-11.
 
 Всего записей реестра: **278**. По категориям: model=186 · texture=42 · ui=12 · vfx=14 · animation=5 · music=6 · sfx=13. По приоритету: P0=100 · P1=115 · P2=63.
 

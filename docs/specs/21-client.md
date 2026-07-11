@@ -4,13 +4,13 @@
 > **Скоуп файла:** техническая архитектура нового клиента `sunnyside/` — Vite + React + React-Three-Fiber (R3F) + zustand; структура папок; сцены (ферма/город/ярмарка/смена); реестр zustand-слайсов и их стейт; сетевой слой на `supabase-js` (оптимистичные апдейты, reconnect, оффлайн-очередь мутаций); тик-синхронизация серверных таймеров; перф-бюджеты (полигоны, draw calls, 60 fps на средних ноутбуках); система заглушек-ассетов (примитивы + палитра, конвенция имён, реестр `placeholder→final`); дебаг-роутинг (`?screen=`); тестовая стратегия (vitest — юниты экономики, Playwright — смоук).
 > **Не в скоупе:** серверная схема БД, RLS, Edge Functions и их контракты (это спека бэкенда, `docs/specs/20-backend.md`); дизайн экранов и их визуал (`docs/specs/19-ui-ux.md`); арт-пайплайн финальных GLB (`docs/specs/22-audio-visual.md`); игровые правила систем (их профильные спеки §6). Здесь — **как клиент устроен и как он говорит с сервером**, а не что именно он показывает.
 > **Правило языка (канон §5):** русский текст; нейминги — `English (Русская локализация)` при первом упоминании; в коде/БД — только английский snake_case ключ.
-> **Правило соседства с прототипом:** существующий корневой прототип `src/` (проект `farm-truck`) **не трогаем**. Новый клиент живёт в изолированной подпапке `sunnyside/` с собственным `package.json` и `vite.config.ts`. Причина изоляции — §3.1.
+> **Расположение клиента:** Sunnyside — единственная игра репозитория, живёт в его **корне** (`src/`, `package.json`, `vite.config.ts`). Исторически клиент разрабатывался в изолированной подпапке `sunnyside/` рядом с прототипом `farm-truck`; прототип удалён, а Sunnyside поднят в корень (см. §3.1). Пути в старых спеках/комментариях вида `sunnyside/src/...` читать как `src/...`.
 
 ---
 
 ## 1. TL;DR
 
-- **Отдельное приложение `sunnyside/`.** Клиент Sunnyside — новый Vite-проект в подпапке репозитория, со своим `package.json`, `vite.config.ts`, `tsconfig`. Корневой прототип `farm-truck` (`src/`) остаётся нетронутым как референс-песочница; код между ними **не шарится импортами** (граница по файловой системе, не по alias).
+- **Приложение в корне репозитория.** Клиент Sunnyside — Vite-проект в корне репо, со своим `package.json`, `vite.config.ts`, `tsconfig`. (Прежде клиент жил в подпапке `sunnyside/` рядом с прототипом `farm-truck`; прототип удалён, Sunnyside поднят в корень.)
 - **Стек фиксирован каноном (D13/D14):** Vite 5 + React 18 + `@react-three/fiber` 8 + `@react-three/drei` 9 + zustand 5, пакетный менеджер **pnpm**. Бэкенд — Supabase (`@supabase/supabase-js` v2): Postgres + Realtime + Edge Functions. Мультиплеер **асинхронный** — реалтайм-физики нет, только подписки на изменения строк.
 - **Жёсткая граница `game/ ↔ scene/`** наследуется от прототипа (CLAUDE.md): вся игровая логика и сторы — ноль импортов из `three`/`@react-three/*`, тестируются в node. `scene/` — только рендер. Экономические формулы (`14-economy`) живут в `game/econ/` как чистые функции и покрываются vitest.
 - **Четыре сцены-корня, один `<Canvas>` на активную сцену:** `FarmScene (Ферма)`, `TownScene (Город)`, `FairScene (Ярмарка)`, `ShiftScene (Смена у прилавка)`. Переключение — не роутером URL в проде, а `sceneSlice.active`; `?screen=` — дебаг-оверрайд для разработки и Playwright.
@@ -43,52 +43,49 @@
 
 ## 3. Механики (техническая архитектура — исчерпывающе)
 
-### 3.1 Изоляция приложения `sunnyside/`
+### 3.1 Расположение приложения (корень репозитория)
 
-**Почему подпапка, а не переезд в корень.** Корневой прототип `farm-truck` (`src/`, `package.json` с `name: "farm-truck"`) — рабочий 2D→3D эксперимент, привязанный к `reference/farm-truck-game.html` и Blender-пайплайну в `tools/`. Он остаётся источником проверенных паттернов (граница `game/scene`, инстансинг, persist-стор). Sunnyside — полноценный продукт с сетью, поэтому получает **свой** корень сборки, чтобы:
-1. независимые версии зависимостей (Sunnyside тянет `@supabase/supabase-js`, `idb`, `@playwright/test` — прототипу они не нужны);
-2. отдельный Vite/TS-конфиг (свои env, alias, worker-и) без риска сломать прототип;
-3. чистый `pnpm --filter` таргет и отдельный деплой.
+**Клиент живёт в корне репо.** Исторически Sunnyside разрабатывался в изолированной подпапке `sunnyside/` рядом с корневым прототипом `farm-truck` (`src/`, `package.json` с `name: "farm-truck"`, `reference/farm-truck-game.html`, Blender-пайплайн в `tools/`) — чтобы не смешивать зависимости и конфиги двух проектов. Прототип **удалён**, а Sunnyside поднят в корень: теперь это единственная игра репозитория со своим корнем сборки. Историческое обоснование изоляции (независимые версии зависимостей, отдельный Vite/TS-конфиг, отдельный деплой) сохраняется как одно приложение в корне.
 
-**Структура репозитория после добавления клиента:**
+**Структура репозитория:**
 
 ```
-Veras-Game/
-├── src/                      # корневой прототип farm-truck — НЕ ТРОГАТЬ
+game/                         # корень репо = клиент Sunnyside
 ├── docs/specs/               # спеки (этот файл — 21-client.md)
 ├── supabase/                 # миграции, Edge Functions (спека бэкенда)
-└── sunnyside/                # ← НОВЫЙ КЛИЕНТ
-    ├── package.json          # name: "sunnyside", свои deps
-    ├── vite.config.ts        # плагины react + tailwind; alias '@' → src
-    ├── tsconfig.json / tsconfig.app.json  # strict, как в прототипе
-    ├── playwright.config.ts
-    ├── index.html
-    ├── public/
-    │   ├── assets/           # финальные GLB (приходят из tools/08_export)
-    │   ├── palette.json      # плоская палитра (наследует прототип)
-    │   └── placeholders/     # (пусто — примитивы генерятся в коде)
-    └── src/
-        ├── main.tsx          # точка входа, провайдеры, роут-дебаг
-        ├── App.tsx           # выбор активной сцены + HUD-оверлей
-        ├── game/             # ЛОГИКА. ноль импортов three/@react-three/*
-        │   ├── store/        # zustand-слайсы (§3.4)
-        │   ├── econ/         # чистые эконом-формулы (14-economy) + тесты
-        │   ├── clock/        # serverNow, таймеры, тик-синхро (§3.6)
-        │   └── types/        # общие доменные типы, ключи канона
-        ├── net/              # СЕТЬ. supabase-client, очередь, reconcile (§3.5)
-        │   ├── client.ts     # createClient, singleton
-        │   ├── queue.ts      # mutationQueue (IndexedDB через idb)
-        │   ├── channels.ts   # Realtime-подписки → слайсы
-        │   └── rpc.ts        # типизированные вызовы Edge Functions
-        ├── scene/            # РЕНДЕР. R3F/three, только отрисовка (§3.3)
-        │   ├── farm/         # FarmScene и её пропсы
-        │   ├── town/         # TownScene (LOD/имперостеры)
-        │   ├── fair/         # FairScene
-        │   ├── shift/        # ShiftScene (мини-игра подачи)
-        │   ├── common/       # камера, свет, Ground, PerfGate
-        │   └── assets/       # assetRegistry, Placeholder-примитивы (§3.7)
-        ├── ui/               # DOM-оверлей поверх канваса (HUD, панели)
-        └── test/             # setup, фикстуры, mock-supabase
+├── scripts/                  # check-boundaries, gen-assets-table, db-apply, agent-db
+├── package.json              # name: "sunnyside", свои deps
+├── vite.config.ts            # плагины react + tailwind; alias '@' → src
+├── tsconfig.json / tsconfig.app.json  # strict
+├── playwright.config.ts
+├── index.html
+├── e2e/                      # Playwright-смоуки
+├── public/
+│   ├── assets/               # финальные GLB
+│   ├── palette.json          # плоская палитра
+│   └── placeholders/         # (пусто — примитивы генерятся в коде)
+└── src/
+    ├── main.tsx          # точка входа, провайдеры, роут-дебаг
+    ├── App.tsx           # выбор активной сцены + HUD-оверлей
+    ├── game/             # ЛОГИКА. ноль импортов three/@react-three/*
+    │   ├── store/        # zustand-слайсы (§3.4)
+    │   ├── econ/         # чистые эконом-формулы (14-economy) + тесты
+    │   ├── clock/        # serverNow, таймеры, тик-синхро (§3.6)
+    │   └── types/        # общие доменные типы, ключи канона
+    ├── net/              # СЕТЬ. supabase-client, очередь, reconcile (§3.5)
+    │   ├── client.ts     # createClient, singleton
+    │   ├── queue.ts      # mutationQueue (IndexedDB через idb)
+    │   ├── channels.ts   # Realtime-подписки → слайсы
+    │   └── rpc.ts        # типизированные вызовы Edge Functions
+    ├── scene/            # РЕНДЕР. R3F/three, только отрисовка (§3.3)
+    │   ├── farm/         # FarmScene и её пропсы
+    │   ├── town/         # TownScene (LOD/имперостеры)
+    │   ├── fair/         # FairScene
+    │   ├── shift/        # ShiftScene (мини-игра подачи)
+    │   ├── common/       # камера, свет, Ground, PerfGate
+    │   └── assets/       # assetRegistry, Placeholder-примитивы (§3.7)
+    ├── ui/               # DOM-оверлей поверх канваса (HUD, панели)
+    └── test/             # setup, фикстуры, mock-supabase
 ```
 
 **Граница `game/ ↔ scene/` (наследуется, канон работы прототипа):** `game/` не импортирует `three`, `@react-three/*`, `net/`. `scene/` читает из сторов через селекторы и вызывает экшены, но не содержит бизнес-правил. `net/` импортирует `game/store` (чтобы применять серверные патчи), но не `scene/`. Нарушение границы — баг ревью, не «прагматичное решение».

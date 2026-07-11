@@ -2,13 +2,13 @@
 /**
  * Sunnyside — Фаза D: генератор таблицы всех ассетов игры.
  *
- * Читает мастер-реестр `sunnyside/src/assets/placeholders/registry.ts` (registry-converge,
+ * Читает мастер-реестр `src/assets/placeholders/registry.ts` (registry-converge,
  * единственный источник данных по ассетам) и эмитит `docs/ASSETS.md` — таблицу ВСЕХ ассетов
  * (модели/текстуры/UI/VFX/анимации/музыка/SFX), сгруппированную по категориям, с требованиями
  * к финалу, описанием текущей заглушки и приоритетом P0–P2.
  *
  * `registry.ts` не имеет внешних импортов (самодостаточный модуль) — читаем его исходник,
- * транспилируем TS→JS через компилятор TypeScript (уже установлен в sunnyside/node_modules,
+ * транспилируем TS→JS через компилятор TypeScript (уже установлен в node_modules,
  * без добавления зависимостей) и импортируем результат как ESM, чтобы переиспользовать
  * официальные хелперы реестра (`assetRegistry`, `listByCategory`, `categoryCounts`) вместо
  * хрупкого ручного парсинга объектных литералов (реестр строится императивно — циклами/push).
@@ -24,9 +24,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const REGISTRY_TS = join(ROOT, 'sunnyside', 'src', 'assets', 'placeholders', 'registry.ts')
+const REGISTRY_TS = join(ROOT, 'src', 'assets', 'placeholders', 'registry.ts')
 const OUT_MD = join(ROOT, 'docs', 'ASSETS.md')
-const TS_COMPILER = join(ROOT, 'sunnyside', 'node_modules', 'typescript', 'lib', 'typescript.js')
+const TS_COMPILER = join(ROOT, 'node_modules', 'typescript', 'lib', 'typescript.js')
 const SPEC_AV = 'docs/specs/22-audio-visual.md'
 
 // ── 1) Загрузка реестра: TS → JS в темп-файл → dynamic import ───────────────
@@ -38,7 +38,7 @@ async function loadRegistryModule() {
   if (!existsSync(TS_COMPILER)) {
     throw new Error(
       `Компилятор TypeScript не найден: ${TS_COMPILER}\n` +
-        'Ожидается установленным в sunnyside/node_modules (devDependency "typescript").',
+        'Ожидается установленным в node_modules (devDependency "typescript").',
     )
   }
   const ts = (await import(pathToFileURL(TS_COMPILER).href)).default
@@ -239,7 +239,7 @@ function buildMarkdown(mod) {
   lines.push('')
   lines.push(
     '> Автосгенерировано `scripts/gen-assets-table.mjs` — **не редактировать руками**. ' +
-      'Источник правды — `sunnyside/src/assets/placeholders/registry.ts` (единственный мастер-реестр, ' +
+      'Источник правды — `src/assets/placeholders/registry.ts` (единственный мастер-реестр, ' +
       'registry-converge); правь его и перегоняй `node scripts/gen-assets-table.mjs` заново.',
   )
   lines.push(`> Спека-первоисточник аудио/арт-требований: \`${SPEC_AV}\`.`)

@@ -1,5 +1,5 @@
 {
-  "_note": "Плоская палитра Sunnyside (21-client §3.7). MeshLambertMaterial, ноль PBR — как Blender solid viewport. Наследует прототип farm-truck. Именованные цвета — не hex в компонентах. Меняем настроение сцены — правим ЭТОТ файл, не код.",
+  "_note": "Плоская палитра Sunnyside (21-client §3.7). MeshLambertMaterial, ноль PBR — как Blender solid viewport. Именованные цвета — не hex в компонентах. Меняем настроение сцены — правим ЭТОТ файл, не код.",
 
   "diner_red": "#e2523b",
   "diner_cream": "#f5ecd6",

@@ -4,22 +4,24 @@ dist/
 dist-ssr/
 *.local
 
-# blender source of truth is the scripts, not the .blend (see CLAUDE.md)
-*.blend
-*.blend1
-
-# env / editor
+# env (21-client §3.5 — ключи не коммитим)
 .env
 .env.*
-# шаблон без значений — его коммитим
-!.env.example
-.DS_Store
-.vscode/
-.idea/
+!.env.sunnyside.example
 
-# python
-__pycache__/
-*.pyc
+# playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# coverage
+/coverage/
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
 
 # ts build info
 *.tsbuildinfo

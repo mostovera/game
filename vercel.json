@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "buildCommand": "node scripts/build-web.mjs",
+  "buildCommand": "VITE_BACKEND_ADAPTER=local pnpm build",
   "outputDirectory": "dist",
   "installCommand": "pnpm install"
 }

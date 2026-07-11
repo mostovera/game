@@ -1,147 +1,181 @@
-import { Suspense, useEffect, useState } from 'react'
-import * as THREE from 'three'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, OrthographicCamera } from '@react-three/drei'
-import { Perf } from 'r3f-perf'
-import { Farm } from './scene/Farm'
-import { HUD } from './ui/HUD'
-import { useAmbience } from './audio/useAmbience'
-import { useGameSfx } from './audio/useGameSfx'
+/**
+ * App.tsx — корень приложения (21-client §3.2, интегратор C3). Собирает играбельное целое:
+ *
+ *  ┌ <Canvas> … <ActiveScene key=scene> ┐  ← ровно ОДИН персистентный 3D-канвас (рендерер
+ *  │  живёт всё приложение); key на ВНУТРЕННЕМ графе → смена scene.active размонтирует       │
+ *  │  scene-граф (освобождение GPU-объектов), но НЕ рендерер (WebGL-контекст сохраняется).   │
+ *  └───────────────────────────────────────────────────────────────────────────────────────┘
+ *  Поверх канваса — DOM-оверлеи, обёрнутые в <SystemsProvider> (DI систем движка):
+ *    · <Hud/>          — marquee/навигация/тосты/колокол/net-плашка (зона hud-nav)
+ *    · <PanelHost/>    — все канон-панели `ui_*` в модальном каркасе (ui.activePanel)
+ *    · <PanelLauncher/>— HUD-индекс всех смонтированных панелей (достижимость из прод-UI)
+ *    · <OnboardingHost/> — FTUE поверх всего, пока не пройден (18-onboarding)
+ *
+ * БУТСТРАП (§3.2): при монтировании — init адаптера → сессия → serverOffset → гидрация
+ * слайсов → подписка на уведомления. Дип-линки `?screen=`/`?panel=` (dev/e2e) применяются
+ * поверх (для ручного/смоук-обхода всех экранов), FTUE при этом пропускается, чтобы экран
+ * был виден.
+ */
 
-interface CamState {
-  pos: [number, number, number]
-  target: [number, number, number]
-  zoom: number
+import { Canvas } from '@react-three/fiber'
+import { Component, Suspense, useEffect, useMemo, type ReactNode } from 'react'
+import { useStore } from '@/state'
+import { ActiveScene } from '@/scene'
+import { Hud } from '@/ui/Hud'
+import { OnboardingHost, useFtueStore } from '@/ui/onboarding'
+import { color } from '@/scene/assets/palette'
+import { isDebugEnabled } from '@/bootstrap/debug'
+import { SystemsProvider } from './app/SystemsProvider'
+import { PanelHost } from './app/PanelHost'
+import { PanelLauncher } from './app/PanelLauncher'
+import { bootstrap, getAdapter, createSystemContext, createSystems, type AppSystems } from './app/backend'
+import { subscribeNotifications } from './app/notifications'
+
+// СБРОС ТРАНЗИЕНТНОГО ОВЕРЛЕЯ НА СТАРТЕ (до первого рендера): `ui.activePanel` попадает в
+// persist-whitelist, поэтому после перезагрузки восстанавливается открытая модалка. Это (а)
+// нежелательный UX (оверлей — транзиентный), и (б) заставляет Modal смонтироваться сразу
+// active=true → в StrictMode двойной прогон history-эффекта Modal сам себя закрывает (гонка
+// history.back()→popstate). Открытие панелей идёт только через пост-маунт путь (дип-линк/клик),
+// где Modal уже смонтирована неактивной и активируется чисто. Модуль App импортируется в
+// main.tsx ДО createRoot — сброс успевает до рендера.
+if (useStore.getState().ui.activePanel !== null) useStore.getState().openPanel(null)
+
+// Dev/e2e: доступ к сторам из консоли/смоуков (только dev-сборка).
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  ;(window as unknown as { sunnyside?: unknown }).sunnyside = { useStore, useFtueStore }
 }
 
-function RenderStats() {
-  const gl = useThree((s) => s.gl)
-  const camera = useThree((s) => s.camera)
-  const size = useThree((s) => s.size)
-  useFrame(() => {
-    const w = window as unknown as { __render?: unknown; __r3f?: unknown }
-    w.__render = { calls: gl.info.render.calls, triangles: gl.info.render.triangles }
-    w.__r3f = {
-      project: (x: number, y: number, z: number) => {
-        const v = new THREE.Vector3(x, y, z).project(camera)
-        return { x: ((v.x + 1) / 2) * size.width, y: ((1 - v.y) / 2) * size.height }
-      },
-    }
-  })
-  return null
+/**
+ * SceneBoundary — граница ошибки ВНУТРИ Canvas вокруг активной сцены. Без неё исключение
+ * при рендере сцены (напр. drei <Text> не смог подгрузить шрифт в оффлайне/под CSP)
+ * всплывает наружу Canvas и гасит ВСЁ приложение вместе с HUD. С границей — падает только
+ * сцена (пустой кадр), HUD жив, а переключение сцены (`key` на внутреннем графе меняется)
+ * поднимает свежий граф. `sceneKey` сбрасывает границу при смене сцены.
+ */
+class SceneBoundary extends Component<{ sceneKey: string; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidUpdate(prev: { sceneKey: string }) {
+    if (prev.sceneKey !== this.props.sceneKey && this.state.failed) this.setState({ failed: false })
+  }
+  render() {
+    // Пустой кадр при падении сцены — HUD (вне Canvas) остаётся управляемым.
+    return this.state.failed ? null : this.props.children
+  }
 }
 
-// Пишет текущее состояние камеры в window — читает FramePanel.
-function CameraProbe() {
-  const camera = useThree((s) => s.camera) as THREE.OrthographicCamera
-  const controls = useThree((s) => s.controls) as { target?: THREE.Vector3 } | null
-  useFrame(() => {
-    const t = controls?.target
-    const w = window as unknown as { __camState?: CamState }
-    w.__camState = {
-      pos: [camera.position.x, camera.position.y, camera.position.z],
-      target: t ? [t.x, t.y, t.z] : [0, 0, 0],
-      zoom: camera.zoom,
-    }
-  })
-  return null
-}
-
-// Панель кадрирования (?frame): показывает параметры камеры и даёт их скопировать.
-function FramePanel({ scene }: { scene: 'farm' | 'truck' }) {
-  const [state, setState] = useState<CamState | null>(null)
+/** Бутстрап + подписки + применение дебаг-дип-линков. Один раз на монтирование App. */
+function useBootstrap() {
   useEffect(() => {
-    let raf = 0
-    const tick = () => {
-      const w = window as unknown as { __camState?: CamState }
-      if (w.__camState) setState(w.__camState)
-      raf = requestAnimationFrame(tick)
+    let unsub: (() => void) | undefined
+    let cancelled = false
+
+    void bootstrap().then((adapter) => {
+      if (cancelled) return
+      unsub = subscribeNotifications(adapter)
+
+      // Дип-линки дебага (?panel=; ?screen= уже применён в main.tsx через goto).
+      // ВАЖНО: FTUE пропускаем ТОЛЬКО при явном дип-линке экрана/панели (обход всех
+      // экранов для дебага/смоуков), а не на каждом dev-запуске — иначе живой FTUE
+      // никогда бы не показался в разработке.
+      if (isDebugEnabled()) {
+        const { panel, screen } = useStore.getState().ui.debug
+        if (panel) useStore.getState().openPanel(panel)
+        if (screen || panel) {
+          const ftue = useFtueStore.getState()
+          if (ftue.phase !== 'done') ftue.finish()
+        }
+      }
+    })
+
+    return () => {
+      cancelled = true
+      unsub?.()
+      void getAdapter().dispose()
     }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
   }, [])
-  if (!state) return null
-  const f = (n: number) => n.toFixed(2)
-  const url = `?cam=${state.pos.map(f).join(',')}&tgt=${state.target.map(f).join(',')}&zoom=${Math.round(
-    state.zoom,
-  )}`
-  const other = scene === 'farm' ? '?frame=truck' : '?frame'
-  return (
-    <div className="pointer-events-auto absolute left-1/2 top-4 -translate-x-1/2 rounded-lg bg-black/80 px-4 py-3 text-center font-mono text-xs text-white">
-      <div className="text-sm font-bold text-[#f4b942]">
-        Кадрирую: {scene === 'farm' ? '🌱 ферма (дни 1–6)' : '🚚 фудтрек (день 7)'}
-      </div>
-      <div className="mt-1 opacity-80">перетаскивай — поворот · колесо — зум · правой кнопкой — сдвиг</div>
-      <div className="mt-2 text-sm">
-        cam=[{state.pos.map(f).join(', ')}] · tgt=[{state.target.map(f).join(', ')}] · zoom=
-        {Math.round(state.zoom)}
-      </div>
-      <button
-        onClick={() => void navigator.clipboard?.writeText(url)}
-        className="mt-2 rounded bg-[#f4b942] px-3 py-1 font-bold text-black transition hover:brightness-110"
-      >
-        Копировать параметры камеры
-      </button>
-      <div className="mt-2 opacity-70">вторая сцена — открой {other}</div>
-    </div>
-  )
 }
 
-const params =
-  typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams()
-const SHOW_PERF = params.has('perf')
-// ?frame — кадрируем ферму, ?frame=truck — кадрируем фудтрек, иначе игра.
-const FRAME_SCENE: 'farm' | 'truck' | null = params.has('frame')
-  ? params.get('frame') === 'truck'
-    ? 'truck'
-    : 'farm'
-  : null
+export function App() {
+  const active = useStore((s) => s.scene.active)
+  const liteMode = useStore((s) => s.ui.perf.liteMode)
+  const locale = useStore((s) => s.ui.locale)
+  const streetJoined = useFtueStore((s) => s.streetJoined)
+  // APP-4: личный день игрока (1..7, §3.5 — счётчик активных дней) для пост-FTUE карточки
+  // цели дня. Ближайший источник в сторе — стрик завсегдатая (`progression.streak.streakDays`,
+  // счётчик дней активности); вне 1..7 `DailyGoalCard` сам вернёт `null`. Нет прогрессии → undefined.
+  const personalDay = useStore((s) => s.progression?.streak.streakDays)
 
-const num3 = (v: string | null, fallback: [number, number, number]): [number, number, number] => {
-  const p = v?.split(',').map(Number)
-  return p && p.length === 3 && p.every((n) => !Number.isNaN(n)) ? [p[0], p[1], p[2]] : fallback
-}
+  useBootstrap()
 
-// Две сцены — два ракурса. ?cam/tgt/zoom переопределяют текущий кадрируемый.
-const FARM_CAM = {
-  pos: num3(params.get('cam'), [10.67, 6.67, 12.41]),
-  target: num3(params.get('tgt'), [2.17, 0.27, -0.39]),
-  zoom: params.get('zoom') ? Number(params.get('zoom')) : 148,
-}
-// День 7 идёт крупным планом: в кадре окно фудтрака и очередь, уходящая от него
-// вправо. Камера ортографическая, поэтому «ближе» — это zoom, а не короче вектор.
-//
-// Смотрим строго вдоль −FACE_DIR из truckStage.ts (грузовик стоит наискось) и
-// не выше 30° над горизонтом: круче — и открытая створка перехватит луч из окна,
-// и вместо героя мы увидим её изнанку.
-const TRUCK_CAM = {
-  pos: num3(FRAME_SCENE === 'truck' ? params.get('cam') : null, [7.52, 2.63, -2.93]),
-  target: num3(FRAME_SCENE === 'truck' ? params.get('tgt') : null, [3.52, 1.0, -5.93]),
-  zoom: FRAME_SCENE === 'truck' && params.get('zoom') ? Number(params.get('zoom')) : 120,
-}
+  // Один набор систем на всё приложение (farm-ui-seams, расширено adapter-seams): строим
+  // здесь, а не только внутри <SystemsProvider>, потому что сцена (внутри Canvas, ДО
+  // DOM-оверлеев) тоже нуждается в системах — иначе клики фермы/города/ярмарки остаются
+  // локальным оптимистичным кэшем и никогда не доходят до BackendAdapter (AGENTS.md §0.3).
+  // Прокидываем `farmSystems`/`townSystems`/`shiftSystem` в <ActiveScene> (см. scene/index.tsx)
+  // и тот же объект в <SystemsProvider systems={...}> (её штатный параметр инъекции систем
+  // для тестов), так что DOM-оверлеи и сцена делят ОДИН экземпляр — не дублируем сборку.
+  const systems: AppSystems = useMemo(() => createSystems(createSystemContext(getAdapter())), [])
 
-// Начальный кадр: в режиме кадрирования — под выбранную сцену; иначе ферма.
-const START = FRAME_SCENE === 'truck' ? TRUCK_CAM : FARM_CAM
+  // Dev/e2e-мост (полный игровой цикл, e2e/game-loop.spec): выкладываем построенные системы
+  // и адаптер на тот же `window.sunnyside`, что и сторы (см. выше). ЗАЧЕМ: часть шагов цикла —
+  // это POI-клики по 3D-сцене (сбор урожая по грядке) или действия, которые UI-панель гейтит
+  // до готовых блюд (выкладка на прилавок / донат в котёл принимают только `dish_*`), тогда как
+  // сток раннего цикла — полуфабрикат `ingr_flour`. Playwright не кликает по WebGL-объектам
+  // надёжно, поэтому эти конкретные швы e2e дёргает через реальные системы движка (тот же путь,
+  // что покрыт зелёным `app/integration.test.ts`), а UI-поддержанные шаги (seed picker → посадка,
+  // кухня → крафт, смена) — через настоящий DOM. Только dev (гейт как у стор-моста, не в проде).
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return
+    const w = window as unknown as { sunnyside?: Record<string, unknown> }
+    w.sunnyside = { ...(w.sunnyside ?? {}), systems, getAdapter }
+  }, [systems])
 
-export default function App() {
-  // В режиме кадрирования звук не нужен.
-  useAmbience(FRAME_SCENE === null)
-  useGameSfx(FRAME_SCENE === null)
   return (
     <div className="relative h-full w-full">
-      <Canvas flat shadows dpr={[1, 2]}>
-        <color attach="background" args={['#cfe1ee']} />
-        <OrthographicCamera makeDefault position={START.pos} zoom={START.zoom} near={0.1} far={200} />
-        {SHOW_PERF && <Perf position="top-left" />}
+      <Canvas
+        // APP-3: НЕ ключуем сам <Canvas> по сцене — иначе каждый свитч Farm/Town/Fair
+        // диспозил рендерер и терял WebGL-контекст («Context Lost» → пустой канвас после
+        // нескольких переходов). Рендерер теперь персистентен; освобождение GPU-объектов
+        // берёт на себя размонтаж ВНУТРЕННЕГО scene-графа (`key={active}` на <ActiveScene>).
+        shadows={!liteMode}
+        dpr={liteMode ? 1 : ([1, 1.5] as [number, number])}
+        camera={{ position: [10, 9, 12], fov: 42 }}
+        // touchAction: 'none' (19-ui-ux §4.4 «камера на тач») — канвас сам гарантированно не
+        // отдаёт одно-/двухпальцевые жесты браузерному скроллу/pinch-зуму страницы, независимо
+        // от того, на какой именно DOM-узел r3f/OrbitControls повесят свои pointer-слушатели
+        // (тот же приём, что OrbitControls применяет к СВОЕМУ `domElement` при connect()).
+        style={{ background: color('sky_day'), touchAction: 'none' }}
+      >
         <Suspense fallback={null}>
-          <Farm farmCam={FARM_CAM} truckCam={TRUCK_CAM} rig={FRAME_SCENE === null} />
-          <RenderStats />
+          <SceneBoundary sceneKey={active}>
+            <ActiveScene
+              // key на внутреннем графе (APP-3): смена сцены размонтирует scene-граф
+              // (drei/r3f авто-диспозят его объекты), рендерер выше — переживает.
+              key={active}
+              active={active}
+              farmSystems={{ farm: systems.farm, animals: systems.animals }}
+              townSystems={{ social: systems.social, mailForaging: systems.mailForaging }}
+              shiftSystem={systems.shift}
+            />
+          </SceneBoundary>
         </Suspense>
-        <OrbitControls makeDefault target={START.target} minZoom={20} maxZoom={300} />
-        {FRAME_SCENE && <CameraProbe />}
       </Canvas>
-      {!FRAME_SCENE && <HUD />}
-      {FRAME_SCENE && <FramePanel scene={FRAME_SCENE} />}
+
+      {/* DOM-оверлеи поверх канваса, с DI-провайдерами систем движка. */}
+      <SystemsProvider systems={systems}>
+        <Hud />
+        <PanelHost />
+        <PanelLauncher />
+        <OnboardingHost
+          locale={locale}
+          canSkip={streetJoined}
+          personalDay={personalDay}
+          onStreetJoin={() => useFtueStore.getState().joinStreet()}
+        />
+      </SystemsProvider>
     </div>
   )
 }
